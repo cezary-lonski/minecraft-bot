@@ -848,15 +848,9 @@ async function unstickTick() {
         bot.setControlState('back', false)
       }
     } else {
+      // tylko zaklinowany (nie wbity): nie kopiemy - to moglaby byc sciana budowli albo blanki.
+      // Skok (np. na stopien), lekki ruch w bok i nowa droga zwykle wystarcza.
       console.log('[bot] utknalem w miejscu - probuje sie odblokowac')
-      // co blokuje droge przed nami na wysokosci nog i glowy
-      const feet = pos.floored()
-      const d = facingAxis()
-      for (const p of [feet.offset(d.x, 1, d.z), feet.offset(d.x, 0, d.z)]) {
-        const b = bot.blockAt(p)
-        if (canBreak(b)) { try { await bot.tool.equipForBlock(b, {}) } catch {} try { await bot.dig(b, true) } catch {} }
-      }
-      // skok (np. na stopien) i lekki ruch w bok
       bot.setControlState('jump', true)
       bot.setControlState(Math.random() < 0.5 ? 'left' : 'right', true)
       await sleep(400)
@@ -2027,25 +2021,28 @@ const protectedItems = new Set()
 // duze budowle (zamczysko, palac) nie mieszcza sie w ekwipunku na raz - materialy zbieramy partiami, warstwa po warstwie
 const BATCH_LIMIT = 600
 
-// "rozbierz rusztowania": przy budowlach juz stojacych nie znamy planu, wiec szukamy samotnych slupkow -
-// co najmniej 2 bloki ziemi/bruku jeden na drugim, kazdy bez sasiadow po bokach (sciany i blanki maja sasiadow
-// albo sa pojedyncze, wiec zostaja)
-function looseColumns(radius) {
-  const isolated = p => {
+// Slupki rusztowan (pathfinder stawia je, zeby siegnac wysoko): pionowo co najmniej 2 bloki ziemi/bruku, kazdy
+// z co najwyzej jednym sasiadem po bokach (slupek czesto przylega do muru), nad szczytem pusto, pod spodem cos stoi.
+// Mury i wieze maja po 2+ sasiadow, blanki sa pojedyncze, a krawedz bramy ma mur nad soba - te zostaja.
+function looseColumns(x1, x2, z1, z2, y1, y2) {
+  const pillarLike = p => {
     const b = bot.blockAt(p)
     if (!b || !SCAFFOLD.includes(b.name)) return false
-    return [[1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dz]) => !isSolid(p.offset(dx, 0, dz)))
+    const sides = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dz]) => isSolid(p.offset(dx, 0, dz)))
+    if (sides.length === 0) return true
+    if (sides.length > 1) return false
+    // jeden sasiad: slupek przy murze (za murem pusto) - tak; koniec muru (mur ciagnie sie dalej w te strone) - nie
+    const [dx, dz] = sides[0]
+    return !isSolid(p.offset(2 * dx, 0, 2 * dz))
   }
-  const center = bot.entity.position.floored()
   const blocks = []
-  for (let x = -radius; x <= radius; x++) {
-    for (let z = -radius; z <= radius; z++) {
+  for (let x = x1; x <= x2; x++) {
+    for (let z = z1; z <= z2; z++) {
       let run = []
-      for (let y = 40; y >= -12; y--) {
-        const p = center.offset(x, y, z)
-        if (isolated(p)) { run.push(p); continue }
-        // koniec slupka: liczy sie, gdy ma >= 2 bloki i stoi na czyms
-        if (run.length >= 2 && isSolid(p)) blocks.push(...run)
+      for (let y = y2; y >= y1; y--) {
+        const p = new Vec3(x, y, z)
+        if (pillarLike(p)) { run.push(p); continue }
+        if (run.length >= 2 && isSolid(p) && !isSolid(run[0].offset(0, 1, 0))) blocks.push(...run)
         run = []
       }
     }
@@ -2053,47 +2050,63 @@ function looseColumns(radius) {
   return blocks
 }
 
-function cleanupCommand() {
-  return task('rozbieranie rusztowan', async () => {
-    const blocks = looseColumns(20).sort((a, b) => b.y - a.y)
-    if (!blocks.length) { say('Nie widze rusztowan w promieniu 20 blokow.'); return }
-    say(`Rozbieram rusztowania: ${blocks.length} blokow.`)
-    let removed = 0
-    for (const p of blocks) {
+// rozbieranie bez kopania przez mury: pathfinder nie moze niczego niszczyc ani stawiac nowych slupkow,
+// a kopie tylko sam slupek. Czego nie da sie dosiegnac - zostaje.
+async function removeBlocksCarefully(positions) {
+  const careful = new Movements(bot)
+  careful.canDig = false
+  careful.allow1by1towers = false
+  const normal = bot.pathfinder.movements
+  bot.pathfinder.setMovements(careful)
+  let removed = 0
+  try {
+    for (const p of [...positions].sort((a, b) => b.y - a.y)) { // od gory - nie stoimy na tym, co kopiemy
       if (!running) break
-      setStatus(`rozbieram rusztowanie (${removed}/${blocks.length})`)
+      setStatus(`rozbieram rusztowanie (${removed}/${positions.length})`)
       try { await goNearCell(p); await clearBlock(p); removed++ } catch (e) { console.log('[bot] rusztowanie:', e.message) }
     }
-    if (running) say(`Rozebralem ${removed} blokow rusztowania.`)
+  } finally {
+    bot.pathfinder.setMovements(normal)
+  }
+  return removed
+}
+
+function cleanupCommand() {
+  return task('rozbieranie rusztowan', async () => {
+    const c = bot.entity.position.floored()
+    const blocks = looseColumns(c.x - 20, c.x + 20, c.z - 20, c.z + 20, c.y - 12, c.y + 40)
+    if (!blocks.length) { say('Nie widze rusztowan w promieniu 20 blokow.'); return }
+    say(`Rozbieram rusztowania: ${blocks.length} blokow.`)
+    const removed = await removeBlocksCarefully(blocks)
+    if (running) say(removed < blocks.length ? `Rozebralem ${removed} z ${blocks.length} (reszty nie dosiegne).` : `Rozebralem ${removed} blokow rusztowania.`)
   })
 }
 
+// po budowie (znamy plan): w obrysie wszystko z ziemi/bruku, co nie nalezy do planu; do 4 blokow dookola - slupki
 function findScaffolding(cells, groundY) {
   const planKeys = new Set(cells.filter(c => c.block !== 'air' && !c.temp).map(c => posKey(c.pos)))
   const xs = cells.map(c => c.pos.x)
   const zs = cells.map(c => c.pos.z)
+  const [minX, maxX, minZ, maxZ] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)]
   const maxY = Math.max(...cells.map(c => c.pos.y)) + 2
-  const found = []
-  for (let x = Math.min(...xs) - 1; x <= Math.max(...xs) + 1; x++) {
-    for (let z = Math.min(...zs) - 1; z <= Math.max(...zs) + 1; z++) {
+  const found = new Map()
+  for (let x = minX; x <= maxX; x++) {
+    for (let z = minZ; z <= maxZ; z++) {
       for (let y = groundY; y <= maxY; y++) {
         const p = new Vec3(x, y, z)
         const b = bot.blockAt(p)
-        if (b && SCAFFOLD.includes(b.name) && !planKeys.has(posKey(p))) found.push(b)
+        if (b && SCAFFOLD.includes(b.name) && !planKeys.has(posKey(p))) found.set(posKey(p), p)
       }
     }
   }
-  return found
+  for (const p of looseColumns(minX - 4, maxX + 4, minZ - 4, maxZ + 4, groundY - 1, maxY)) {
+    if (!planKeys.has(posKey(p))) found.set(posKey(p), p)
+  }
+  return [...found.values()]
 }
 
 async function removeScaffolding(found) {
-  let removed = 0
-  for (const b of found.sort((a, c) => c.position.y - a.position.y)) { // od gory - nie stoimy na tym, co kopiemy
-    if (!running) break
-    setStatus(`rozbieram rusztowanie (${removed}/${found.length})`)
-    try { await goNearCell(b.position); await clearBlock(b.position); removed++ } catch (e) { console.log('[bot] rusztowanie:', e.message) }
-  }
-  return removed
+  return await removeBlocksCarefully(found)
 }
 
 async function buildPlan(label, plan, origin, front, opts = {}) {

@@ -99,7 +99,8 @@ Bot buduje przed soba (w kierunku, w ktorym patrzy), sam zbiera materialy i wyro
 Po budowie bot pyta "Zostalo N blokow rusztowania. Rozebrac je? (tak / nie)" (bez odpowiedzi przez 60 s rozbiera)
 - rusztowania to slupki z ziemi/bruku, ktore stawia pathfinder, zeby siegnac wysoko. Postawione
 przez siebie skrzynie traktuje jak swoje (nie pyta o nie). Przy budowlach postawionych wczesniej: `rozbierz rusztowania`
-- usuwa samotne slupki (min. 2 bloki) w promieniu 20 blokow, nie ruszajac murow i blankow.
+- usuwa slupki (min. 2 bloki, takze przylegajace do muru) w promieniu 20 blokow. Muru, blankow, krawedzi bramy ani
+  wiez nie rusza, a przy rozbieraniu pathfinder nie przekopuje sie przez budowle (czego nie dosiegnie, zostaje).
 
 Wszystkie materialy bot zdobywa sam (scina drzewa, kopie bruk, craftuje drzwi, skrzynie, ploty). Ozdoby tez probuje zdobyc:
 szyby (piasek -> szklo w piecu -> szyby) i pochodnie (wegiel + patyki); jak sie nie uda, zostawia w tym miejscu puste pole.
