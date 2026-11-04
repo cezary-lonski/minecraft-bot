@@ -2068,7 +2068,7 @@ function cleanupCommand() {
   })
 }
 
-async function removeScaffolding(cells, groundY) {
+function findScaffolding(cells, groundY) {
   const planKeys = new Set(cells.filter(c => c.block !== 'air' && !c.temp).map(c => posKey(c.pos)))
   const xs = cells.map(c => c.pos.x)
   const zs = cells.map(c => c.pos.z)
@@ -2083,6 +2083,10 @@ async function removeScaffolding(cells, groundY) {
       }
     }
   }
+  return found
+}
+
+async function removeScaffolding(found) {
   let removed = 0
   for (const b of found.sort((a, c) => c.position.y - a.position.y)) { // od gory - nie stoimy na tym, co kopiemy
     if (!running) break
@@ -2191,8 +2195,19 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
     //    Wszystko z tych blokow, co stoi w obrysie budowli (+1 blok dookola) od poziomu gruntu w gore, a nie nalezy do planu - kopiemy.
     if (running) {
       bot.pathfinder.setMovements(normalMoves)
-      const removed = await removeScaffolding(cells, origin.y)
-      if (removed) say(`Rozebralem ${removed} blokow rusztowania.`)
+      const scaffold = findScaffolding(cells, origin.y)
+      if (scaffold.length) {
+        setStatus(`czekam na odpowiedz: rozebrac rusztowania przy ${label}?`)
+        const choice = await askUser(`Zostalo ${scaffold.length} blokow rusztowania. Rozebrac je? (tak / nie)`,
+          [[/^(tak|rozbierz|dawaj|ok|jasne)( je)?$/, 'yes'], [/^(nie|zostaw)( je)?$/, 'no']],
+          60000, 'yes', 'Nie dostalem odpowiedzi - rozbieram.')
+        if (running && choice === 'yes') {
+          const removed = await removeScaffolding(scaffold)
+          if (removed) say(`Rozebralem ${removed} blokow rusztowania.`)
+        } else if (running) {
+          say('Dobra, zostawiam rusztowania ("rozbierz rusztowania" usunie je pozniej).')
+        }
+      }
     }
 
     // 4) tymczasowe podpory znikaja (od gory)

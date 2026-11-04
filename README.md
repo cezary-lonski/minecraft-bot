@@ -96,7 +96,8 @@ Bot buduje przed soba (w kierunku, w ktorym patrzy), sam zbiera materialy i wyro
 | `buduj farma trzciny` | trzcina posadzona przy wodzie | trzcina |
 | `buduj farma zwierzat` | zagroda 9x9 z plotu i furtka (zwierzeta trzeba zwabic) | 31 plotow, furtka |
 
-Po budowie bot sam rozbiera rusztowania (slupki z ziemi/bruku, ktore stawia pathfinder, zeby siegnac wysoko), a postawione
+Po budowie bot pyta "Zostalo N blokow rusztowania. Rozebrac je? (tak / nie)" (bez odpowiedzi przez 60 s rozbiera)
+- rusztowania to slupki z ziemi/bruku, ktore stawia pathfinder, zeby siegnac wysoko. Postawione
 przez siebie skrzynie traktuje jak swoje (nie pyta o nie). Przy budowlach postawionych wczesniej: `rozbierz rusztowania`
 - usuwa samotne slupki (min. 2 bloki) w promieniu 20 blokow, nie ruszajac murow i blankow.
 
