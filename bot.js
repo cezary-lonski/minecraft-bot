@@ -179,6 +179,10 @@ async function makeRoom() {
 }
 
 async function collect(names, amount, itemRe) {
+  if (isCreative() && countMatch(itemRe) < amount) {
+    const name = creativeItemFor(itemRe)
+    if (name) return await creativeGive(name, count(name) + amount - countMatch(itemRe))
+  }
   if (countMatch(itemRe) < amount && !goalReached()) await prepareFor(names)
   let fails = 0
   while (running && countMatch(itemRe) < amount && fails < 5 && !goalReached()) {
@@ -875,7 +879,7 @@ const AUTO_EAT_BELOW = parseInt(process.env.MC_EAT_BELOW || '8')
 let eating = false
 let lastNoFood = 0
 async function autoEat() {
-  if (eating || !mcData || !bot.entity || bot.health <= 0) return
+  if (eating || !mcData || !bot.entity || bot.health <= 0 || isCreative()) return
   const hungry = bot.food < AUTO_EAT_BELOW
   const hurt = bot.health < AUTO_EAT_BELOW
   if (!hungry && !hurt) return
@@ -1189,7 +1193,7 @@ function run() {
 const HELP = [
   'Zadania: start, etap <drewno|kamien|jedzenie|zelazo|diamenty>, zdobadz <surowiec|przedmiot|jedzenie> [ile], poluj [zwierze] [ile], przepal, scraftuj <co>, stop',
   'Ruch: tu, idz <ile> <przod|tyl|lewo|prawo>, idz do <x z | punkt | gracz>, chodz za mna, ochraniaj [gracz], zabij <gracz>, spij',
-  'Budowa: buduj dom | zamek | zamczysko | palac | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
+  'Budowa: buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
   'Inne: status, co robisz, diag, chat <tekst>, permisja <nick>, odbierz <nick>, permisje'
@@ -1568,6 +1572,39 @@ async function craftWithTable(item, amount) {
   return false
 }
 
+// ---------- tryb kreatywny: przedmioty bierzemy z ekwipunku kreatywnego zamiast je zdobywac ----------
+const isCreative = () => bot.game?.gameMode === 'creative'
+
+// wkłada do ekwipunku `amount` sztuk przedmiotu (pelne stacki), jak gracz biorący bloki z menu kreatywnego
+async function creativeGive(name, amount) {
+  const item = mcData.itemsByName[name]
+  if (!item) return false
+  const Item = require('prismarine-item')(bot.registry)
+  let left = Math.max(0, amount - count(name))
+  while (left > 0) {
+    // wolny slot: najpierw pasek szybkiego wyboru (36-44), potem reszta ekwipunku (9-35)
+    const slot = [...Array(9).keys()].map(i => 36 + i).concat([...Array(27).keys()].map(i => 9 + i)).find(s => !bot.inventory.slots[s])
+    if (slot === undefined) { say('Mam pelny ekwipunek - nie zmieszcze wiecej.'); return count(name) >= amount }
+    const n = Math.min(left, item.stackSize || 64)
+    await bot.creative.setInventorySlot(slot, new Item(item.id, n))
+    left -= n
+  }
+  return true
+}
+
+// lot w kreatywnym: w gore, poziomo i w dol. flyTo leci prosto (przez bloki), wiec lecimy na wysokosci,
+// ktora przy budowie od dolu jest jeszcze pusta (nad biezaca warstwa)
+async function creativeFlyTo(target) {
+  const dest = new Vec3(target.x + 0.5, target.y, target.z + 0.5)
+  const top = Math.max(bot.entity.position.y, dest.y) + 1
+  await bot.creative.flyTo(new Vec3(bot.entity.position.x, top, bot.entity.position.z))
+  await bot.creative.flyTo(new Vec3(dest.x, top, dest.z))
+  await bot.creative.flyTo(dest)
+}
+
+// nazwa przedmiotu pasujacego do wzorca (np. /_(log|stem)$/ -> oak_log)
+const creativeItemFor = re => mcData.itemsArray.find(i => re.test(i.name))?.name
+
 // ---------- zdobywanie skladnikow: "mam miec N sztuk X" ----------
 // skad brac surowce, ktorych nie da sie scraftowac
 const GATHER = {
@@ -1649,6 +1686,7 @@ function chooseRecipe(recipes) {
 async function obtain(name, need, depth = 0) {
   if (!running) return false
   if (count(name) >= need) return true
+  if (isCreative()) return await creativeGive(name, need)
   if (depth > 6) return false
   const missing = need - count(name)
   setStatus(`zdobywam ${name} (mam ${count(name)}/${need})`)
@@ -1915,8 +1953,31 @@ function toWorld(origin, front, x, y, z) {
 const isSolid = p => { const b = bot.blockAt(p); return !!b && b.boundingBox === 'block' }
 const hasSupport = p => [[0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]].some(([dx, dy, dz]) => isSolid(p.offset(dx, dy, dz)))
 
-// staje w zasiegu reki, ale nie w miejscu, gdzie ma stanac blok
-async function goNearCell(pos) {
+// kierunek lokalny planu ({x: w prawo, z: do przodu}) -> kierunek w swiecie
+function worldDir(front, d) {
+  const right = turnRight(front)
+  return { x: right.x * d.x + front.x * d.z, z: right.z * d.x + front.z * d.z }
+}
+
+// staje w zasiegu reki, ale nie w miejscu, gdzie ma stanac blok.
+// facing (schody): stajemy 2 bloki za miejscem i patrzymy w tym kierunku - schody obracaja sie tak, jak patrzy stawiajacy
+async function goNearCell(pos, facing) {
+  if (isCreative()) {
+    // w zasiegu reki nie latamy (z jednego miejsca stawiamy wiele blokow); inaczej nad cel - budujemy od dolu,
+    // wiec nad biezaca warstwa jest pusto. Schody - z miejsca za nimi.
+    const here = bot.entity.position
+    const inBody = here.floored().equals(pos) || here.floored().offset(0, 1, 0).equals(pos)
+    if (!facing && !inBody && here.distanceTo(pos.offset(0.5, 0.5, 0.5)) <= 4.2) return
+    const stand = facing ? pos.offset(-facing.x, 0, -facing.z) : pos.offset(0, 2, 0)
+    if (here.distanceTo(stand.offset(0.5, 0, 0.5)) > 1) await creativeFlyTo(stand)
+    return
+  }
+  if (facing) {
+    // stoimy na poprzednim stopniu (albo na ziemi przed pierwszym) - tak schody obracaja sie w strone marszu
+    const stand = pos.offset(-facing.x, 0, -facing.z)
+    await bot.pathfinder.goto(new goals.GoalNear(stand.x, stand.y, stand.z, 0.6))
+    return
+  }
   const dist = bot.entity.position.distanceTo(pos.offset(0.5, 0.5, 0.5))
   const inside = bot.entity.position.floored().equals(pos) || bot.entity.position.floored().offset(0, 1, 0).equals(pos)
   if (dist < 4 && !inside) return
@@ -1974,6 +2035,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
   for (const c of solidCells) protectedItems.add(WOOD_RE.test(c.block) ? 'log' : c.block)
   for (const c of solidCells) noDigPositions.add(posKey(c.pos)) // odblokowywanie nie rusza budowli
   const normalMoves = bot.pathfinder.movements
+  if (isCreative()) await creativeGive('dirt', 64) // rusztowanie dla pathfindera
   try {
     // najpierw to, bez czego sie nie da (sciany, dach, meble); duze budowle - partiami w trakcie
     if (batched) say(`${label} to ${solidCells.length} blokow - materialy bede zbieral partiami, warstwa po warstwie.`)
@@ -2046,7 +2108,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
           if (!it) { if (!c.optional) failed++; continue }
           setStatus(`buduje ${label}: ${placed}/${total} blokow (warstwa ${y - layers[0] + 1}/${layers.length})`)
           try {
-            await goNearCell(c.pos)
+            await goNearCell(c.pos, c.facing && worldDir(front, c.facing))
             await placeBlockAt(it.name, c.pos)
             placed++
           } catch (e) {
@@ -2075,6 +2137,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
     bot.pathfinder.setMovements(normalMoves)
     protectedItems.clear()
     noDigPositions.clear()
+    if (isCreative()) bot.creative.stopFlying()
   }
 }
 
@@ -2240,6 +2303,112 @@ function planPalace() {
   palaceTower(p, 0, 7, 9, 16) // wieza srodkowa na dachu
   p.push({ x: -5, y: 0, z: 10, block: 'crafting_table' }, { x: 5, y: 0, z: 10, block: 'chest' })
   for (const [x, z] of [[-5, 4], [5, 4], [-5, 9], [5, 9]]) p.push({ x, y: 0, z, block: 'torch', optional: true })
+  return replaceInterior(p)
+}
+
+// ---------- palac endu ----------
+// Mieszkalny palac z materialow z Endu: tarasowa platforma z murkiem i latarniami, schody wejsciowe,
+// dwupietrowa sala z kolumnami z purpuru, fioletowe witraze, pasy z purpuru, schody na pietro,
+// cztery okragle wieze z iglicami z end rodow i wysoka wieza srodkowa z kopula.
+const roundCell = (dx, dz, rMin, rMax) => { const d = Math.sqrt(dx * dx + dz * dz); return d > rMin && d <= rMax }
+
+// okragla wieza z bandami purpuru, witrazami, kopula i iglica
+function endTower(p, cx, cz, y0, y1, big) {
+  const R = big ? 3.2 : 2.3
+  const r0 = big ? 2.2 : 1.3
+  const span = Math.ceil(R)
+  for (let dx = -span; dx <= span; dx++) {
+    for (let dz = -span; dz <= span; dz++) {
+      const x = cx + dx
+      const z = cz + dz
+      for (let y = y0; y < y1; y++) {
+        if (roundCell(dx, dz, r0, R)) {
+          const band = (y - y0) % 5 === 4
+          const window = !band && (dx === 0 || dz === 0) && (y - y0) % 5 >= 1 && (y - y0) % 5 <= 2
+          p.push({ x, y, z, block: band ? 'purpur_block' : window ? 'purple_stained_glass' : 'end_stone_bricks', optional: window })
+        } else if (Math.sqrt(dx * dx + dz * dz) <= r0) {
+          p.push({ x, y, z, block: 'air' })
+        }
+      }
+    }
+  }
+  // kopula: coraz mniejsze kregi z purpuru
+  let y = y1
+  for (let rad = R; rad > 0.9; rad -= 1, y++) {
+    for (let dx = -span; dx <= span; dx++) for (let dz = -span; dz <= span; dz++) {
+      if (Math.sqrt(dx * dx + dz * dz) <= rad) p.push({ x: cx + dx, y, z: cz + dz, block: 'purpur_block' })
+    }
+  }
+  // kolce z end rodow na krawedzi kopuly i iglica
+  for (const [dx, dz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) p.push({ x: cx + dx, y: y, z: cz + dz, block: 'end_rod' })
+  p.push({ x: cx, y, z: cz, block: 'purpur_pillar' }, { x: cx, y: y + 1, z: cz, block: 'purpur_pillar' })
+  if (big) p.push({ x: cx, y: y + 2, z: cz, block: 'purpur_pillar' })
+  p.push({ x: cx, y: y + (big ? 3 : 2), z: cz, block: 'end_rod' }, { x: cx, y: y + (big ? 4 : 3), z: cz, block: 'end_rod' })
+}
+
+function planEndPalace() {
+  const p = []
+  // 1) platforma 23x23: obramowanie z purpuru, posadzka z cegiel, fioletowa sciezka z witraza
+  fill(-11, 11, 0, 22, (x, z) => {
+    const border = Math.abs(x) === 11 || z === 0 || z === 22
+    const path = Math.abs(x) <= 1 && z >= 1 && z <= 6
+    p.push({ x, y: 0, z, block: border ? 'purpur_block' : path ? 'purple_stained_glass' : 'end_stone_bricks' })
+  })
+  fill(-11, 11, 0, 22, (x, z) => { for (let y = 1; y < 11; y++) p.push({ x, y, z, block: 'air' }) }) // wolne nad platforma
+  // schody wejsciowe (z ziemi na platforme)
+  for (let x = -2; x <= 2; x++) p.push({ x, y: 0, z: -1, block: 'end_stone_brick_stairs', facing: { x: 0, z: 1 } })
+  // murek dookola platformy (bez wejscia) i slupki z end rodami w rogach
+  ring(-11, 11, 0, 22, (x, z) => { if (!(z === 0 && Math.abs(x) <= 2)) p.push({ x, y: 1, z, block: 'end_stone_brick_wall' }) })
+  for (const [x, z] of [[-11, 0], [11, 0], [-11, 22], [11, 22]]) {
+    p.push({ x, y: 1, z, block: 'purpur_pillar' }, { x, y: 2, z, block: 'purpur_pillar' }, { x, y: 3, z, block: 'end_rod' })
+  }
+  // latarnie przy sciezce
+  for (const x of [-3, 3]) for (const z of [2, 5]) {
+    for (let y = 1; y <= 3; y++) p.push({ x, y, z, block: 'purpur_pillar' })
+    p.push({ x, y: 4, z, block: 'end_rod' })
+  }
+
+  // 2) sala 15x15, dwa pietra: parter y1-4, strop y5, pietro y6-9, dach y10
+  const pillar = (x, z) => ((z === 7 || z === 21) && [-7, -3, 3, 7].includes(x)) || (Math.abs(x) === 7 && [7, 11, 14, 18, 21].includes(z)) ||
+    (z === 7 && Math.abs(x) === 2)
+  const nearPillar = (x, z) => pillar(x, z) || pillar(x - 1, z) || pillar(x + 1, z) || pillar(x, z - 1) || pillar(x, z + 1)
+  for (let y = 1; y <= 10; y++) {
+    ring(-7, 7, 7, 21, (x, z) => {
+      if (pillar(x, z)) { p.push({ x, y, z, block: 'purpur_pillar' }); return }
+      const band = y === 5 || y === 10
+      const window = !band && !nearPillar(x, z) && ([2, 3, 4].includes(y) || [7, 8, 9].includes(y))
+      p.push({ x, y, z, block: band ? 'purpur_block' : window ? 'purple_stained_glass' : 'end_stone_bricks', optional: window })
+    })
+  }
+  // portal wejsciowy 3x4 i witrazowa rozeta nad nim
+  for (let x = -1; x <= 1; x++) for (let y = 1; y <= 4; y++) p.push({ x, y, z: 7, block: 'air' })
+  for (let x = -1; x <= 1; x++) p.push({ x, y: 5, z: 7, block: 'purpur_block' })
+  for (const [x, y] of [[0, 6], [-1, 7], [0, 7], [1, 7], [0, 8]]) p.push({ x, y, z: 7, block: 'purple_stained_glass', optional: true })
+  // wnetrze
+  fill(-6, 6, 8, 20, (x, z) => { for (let y = 1; y <= 9; y++) if (y !== 5) p.push({ x, y, z, block: 'air' }) })
+  fill(-6, 6, 8, 20, (x, z) => p.push({ x, y: 5, z, block: 'end_stone_bricks' })) // strop/podloga pietra
+  // schody na pietro wzdluz lewej sciany (z podporami pod stopniami) i otwor w stropie nad nimi
+  for (let i = 0; i <= 4; i++) {
+    for (let y = 1; y < 1 + i; y++) p.push({ x: -6, y, z: 11 + i, block: 'end_stone_bricks' })
+    p.push({ x: -6, y: 1 + i, z: 11 + i, block: 'end_stone_brick_stairs', facing: { x: 0, z: 1 } })
+  }
+  for (let z = 10; z <= 14; z++) p.push({ x: -6, y: 5, z, block: 'air' })
+  // dach i balustrada: na kolumnach end rody, miedzy nimi na zmiane murek i polplyty
+  fill(-7, 7, 7, 21, (x, z) => p.push({ x, y: 10, z, block: 'end_stone_bricks' }))
+  ring(-7, 7, 7, 21, (x, z) => {
+    if (pillar(x, z)) p.push({ x, y: 11, z, block: 'end_rod' })
+    else p.push({ x, y: 11, z, block: (x + z) % 2 === 0 ? 'end_stone_brick_wall' : 'purpur_slab' })
+  })
+  // meble i swiatla: parter i pietro
+  p.push({ x: -4, y: 1, z: 20, block: 'crafting_table' }, { x: -3, y: 1, z: 20, block: 'furnace' },
+    { x: 3, y: 1, z: 20, block: 'chest' }, { x: 4, y: 1, z: 20, block: 'chest' }, { x: 2, y: 6, z: 20, block: 'chest' })
+  for (const [x, z] of [[-5, 9], [5, 9], [5, 19], [-5, 19], [0, 14]]) {
+    p.push({ x, y: 1, z, block: 'end_rod' })
+    p.push({ x, y: 6, z, block: 'end_rod' })
+  }
+  // 3) wieze narozne i wieza srodkowa z kopula
+  for (const [cx, cz] of [[-7, 7], [7, 7], [-7, 21], [7, 21]]) endTower(p, cx, cz, 1, 16, false)
+  endTower(p, 0, 14, 11, 23, true)
   return replaceInterior(p)
 }
 
@@ -2489,6 +2658,12 @@ function buildCommand(text) {
     }
     return task(`napis "${text}"`, () => buildPlan(`napis "${text}"`, planText(text, block), ahead(3), front))
   }
+  if (/^(palac endu|palac z end|endowy palac|palac end|end palac|palac purpur|palac kresu)/.test(t)) {
+    return task('budowa palacu endu', async () => {
+      if (!isCreative()) say('Uwaga: end stone, purpur i end rody sa tylko w Endzie - w survivalu bede potrzebowal ich w ekwipunku. W kreatywnym wezme je sam.')
+      await buildPlan('palac endu', planEndPalace(), ahead(4), front, { passes: 6 })
+    })
+  }
   if (/^zamczysk/.test(t)) return task('budowa zamczyska', () => buildPlan('zamczysko', planBigCastle(), ahead(3), front))
   if (/^(palac|palacyk)/.test(t)) return task('budowa palacu', () => buildPlan('palac', planPalace(), ahead(3), front))
   if (/^zam/.test(t)) return task('budowa zamku', () => buildPlan('zamek', planCastle(), ahead(3), front))
@@ -2508,7 +2683,7 @@ function buildCommand(text) {
     return
   }
   if (/^(dom|baz|chat)/.test(t)) return task('budowa domu', () => buildPlan('dom', planHouse(), ahead(3), front))
-  say('Co zbudowac? dom, zamek, zamczysko, palac, dom villagera, baza podziemna, skybase, napis: <tekst>, farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>')
+  say('Co zbudowac? dom, zamek, zamczysko, palac, palac endu, dom villagera, baza podziemna, skybase, napis: <tekst>, farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>')
 }
 
 // ---------- pliki z danymi (punkty, uprawnienia) ----------

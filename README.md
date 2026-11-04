@@ -86,6 +86,7 @@ Bot buduje przed soba (w kierunku, w ktorym patrzy), sam zbiera materialy i wyro
 | `buduj zamek` | mury 13x13 z blankami, brama, 4 wieze | ok. 450 bruku (dlugo!) |
 | `buduj zamczysko` | mury 21x21 (7 wysokie) z blankami, brama, 4 wieze 5x5 (12 wysokie), donzon 7x7 (14 wysoki) | ok. 1630 bruku (bardzo dlugo!) |
 | `buduj palac` | fundament 19x15, sala 15x11 z kolumnami z pni i dwoma rzedami okien, taras z blankami, 4 okragle wieze i wieza srodkowa, wszystkie z iglicami (najwyzszy punkt 21 blokow) | ok. 1000 bruku, 370 desek, 64 pnie, 10 plotow (+144 szyby jako ozdoba) |
+| `buduj palac endu` | najwieksza budowla: platforma 23x23 z murkiem, latarniami i fioletowa sciezka, schody wejsciowe, dwupietrowa sala z kolumnami z purpuru, fioletowe witraze i rozeta, schody na pietro, dach z balustrada i end rodami, 4 okragle wieze z kopulami i iglicami oraz wieza srodkowa (30 blokow wysokosci) | ok. 2800 blokow: end stone bricks, purpur, filary purpuru, fioletowe szklo, end rody, murki, polplyty, schody - najlepiej w kreatywnym |
 | `buduj napis: <tekst>` | napis stojacy przed botem, litery 3x5 (do 30 znakow: litery, cyfry, ! ? . , - : + < >) | 5-15 bruku na litere |
 | `buduj napis z <blok>: <tekst>` | to samo z innego bloku, np. `buduj napis z desek: elo` | |
 | `buduj baza podziemna` | schody 8 w dol i pokoj 7x7x3 ze stolem, piecem, skrzynia i pochodniami | - |
@@ -158,6 +159,11 @@ Okolo 100 polskich nazw: zbroje i narzedzia (`diamentowy set`, `zelazna zbroja`,
   gdy chce isc, a 5 s stoi w miejscu, przekopuje to, co ma przed soba, podskakuje i liczy droge od nowa.
   Nie kopie przy tym scian budowanej wlasnie budowli, drzwi, skrzyn ani pieca.
 - **Pelny ekwipunek:** wyrzuca smieci (bruk glebinowy, ziemia, zwir...), zeby zmiescic rude.
+
+## Tryb kreatywny
+Gdy bot jest w trybie kreatywnym (`/gamemode creative Claude`), nie zbiera surowcow: bierze bloki i przedmioty
+z menu kreatywnego (`zdobadz`, `scraftuj`, `buduj` - wszystko od reki), przy budowie lata zamiast chodzic
+i nie stawia rusztowan. Glod go nie dotyczy. To najlepszy sposob na duze budowle (palac endu, zamczysko).
 
 ## Zmienne srodowiskowe
 | Zmienna | Znaczenie |
