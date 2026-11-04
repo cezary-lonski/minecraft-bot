@@ -2616,9 +2616,11 @@ async function makePond() {
   const front = facingAxis()
   const hole = bot.entity.position.floored().offset(front.x * 3, -1, front.z * 3) // blok ziemi 3 kroki przed nami
   await clearBlock(hole)
+  // wiadro uzywamy wprost na gornej scianie bloku pod dziura (jak klikniecie gracza w dno dolka).
+  // Celowanie wzrokiem z daleka zahaczalo o krawedz dolka i woda wylewala sie na trawe obok.
+  await goNearCell(hole.offset(0, 1, 0))
   await bot.equip(bot.inventory.items().find(i => i.name === 'water_bucket'), 'hand')
-  await bot.lookAt(hole.offset(0.5, 0.05, 0.5), true) // dno dziury
-  bot.activateItem()
+  await bot.activateBlock(bot.blockAt(hole.offset(0, -1, 0)), new Vec3(0, 1, 0))
   await sleep(600)
   const w = bot.blockAt(hole)
   return w && w.name === 'water' ? w : null
