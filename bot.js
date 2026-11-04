@@ -1419,20 +1419,15 @@ function parseCraft(text) {
 
 // czego brakuje do pierwszego przepisu (np. "3 x diamond")
 function missingFor(itemName) {
-  const item = mcData.itemsByName[itemName]
-  const recipe = mcData.recipes[item.id]?.[0]
-  if (!recipe) return 'nie ma przepisu'
-  const need = {}
-  const add = id => { if (id !== null && id !== undefined && id >= 0) need[id] = (need[id] || 0) + 1 }
-  if (recipe.inShape) recipe.inShape.flat().forEach(x => add(x?.id ?? x))
-  else (recipe.ingredients || []).forEach(x => add(x?.id ?? x))
+  const recipes = mcData.recipes[mcData.itemsByName[itemName]?.id]
+  if (!recipes?.length) return `${itemName} (nie da sie go scraftowac)`
   const out = []
-  for (const [id, n] of Object.entries(need)) {
-    const nm = mcData.items[id]?.name
-    const lack = n - count(nm)
-    if (nm && lack > 0 && !/planks|stick/.test(nm)) out.push(`${lack} x ${nm}`)
+  for (const [nm, n] of Object.entries(recipeIngredients(chooseRecipe(recipes)))) {
+    const planks = /_planks$/.test(nm) // deski: dowolne drewno
+    const lack = n - (planks ? countMatch(/_planks$/) : count(nm))
+    if (lack > 0) out.push(`${lack} x ${planks ? 'deski' : nm}`)
   }
-  return out.join(', ') || 'deski lub patyki'
+  return out.join(', ') || 'niczego (crafting sie nie udal - sprobuj jeszcze raz)'
 }
 
 // robi przedmiot, a w razie potrzeby najpierw patyki (narzedzia); false gdy brakuje materialow
@@ -1596,7 +1591,11 @@ async function obtain(name, need, depth = 0) {
   for (const [ing, per] of ingredients) {
     const want = per * times
     const ok = /_planks$/.test(ing) ? await obtain('oak_planks', want, depth + 1) : await obtain(ing, want, depth + 1)
-    if (!ok) { if (running) say(`Nie udalo mi sie zdobyc ${ing} do ${name}.`); return false }
+    if (!ok) {
+      const have = /_planks$/.test(ing) ? countMatch(/_planks$/) : count(ing)
+      if (running) say(`Do ${name} brakuje mi: ${want - have} x ${ing}.`)
+      return false
+    }
   }
   // przepisy 3x3 wymagaja stolu - bez niego i bez desek na niego crafting sie nie uda
   const needsTable = recipe.inShape && (recipe.inShape.length > 2 || recipe.inShape.some(row => row.length > 2))
@@ -1630,10 +1629,10 @@ async function craftCommand(text) {
       if (isGear && has(name)) { await equipArmor(name); continue }
       // brakujace skladniki zdobywa sam: craftuje posrednie (deski, patyki), wydobywa, przepala, poluje
       const ok = await obtain(name, count(name) + (isGear ? 1 : amount))
-      if (ok) { done.push(name); await equipArmor(name) } else missing.push(`${name} (brakuje: ${missingFor(name)})`)
+      if (ok) { done.push(name); await equipArmor(name) } else missing.push(`${missingFor(name)} (do ${name})`)
     }
     if (done.length) say('Scraftowalem: ' + done.join(', '))
-    for (const m of missing) say('Nie moge: ' + m)
+    if (missing.length) say('Brakuje mi: ' + missing.join('; ') + '.')
     if (!done.length && !missing.length) say('Wszystko juz mam.')
   })
 }
@@ -1846,13 +1845,17 @@ async function gatherMaterials(cells, label) {
   for (const c of cells) if (c.block !== 'air') need[c.block] = (need[c.block] || 0) + 1
   const rank = n => WOOD_RE.test(n) ? 2 : /_planks$/.test(n) ? 1 : 0
   const names = Object.keys(need).sort((a, b) => rank(a) - rank(b))
-  say(`${label} - potrzebuje: ${names.map(n => `${n} x${need[n]}`).join(', ')}.`)
+  // "Brakuje mi: 80 x oak_planks, 10 x oak_log" - tylko to, czego nie ma w ekwipunku
+  const missingText = () => names.filter(n => haveOf(n) < need[n]).map(n => `${need[n] - haveOf(n)} x ${n}`).join(', ')
+  const missing = missingText()
+  if (!missing) { say(`Mam wszystko na ${label}.`); return true }
+  say(`Na ${label} brakuje mi: ${missing}. Ide to zdobyc.`)
   for (const name of names) {
     if (!running) return false
     if (haveOf(name) >= need[name]) continue
     setStatus(`zbieram material na ${label}: ${name} (mam ${haveOf(name)}/${need[name]})`)
     const ok = WOOD_RE.test(name) ? await collect(woodBlocks(), need[name], WOOD_RE) : await obtain(name, need[name])
-    if (!ok && running) { say(`Nie udalo mi sie zdobyc ${name} na ${label}.`); return false }
+    if (!ok && running) { say(`Nie dam rady zbudowac ${label}. Brakuje mi: ${missingText()}.`); return false }
   }
   return running
 }
