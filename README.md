@@ -119,6 +119,8 @@ Okolo 100 polskich nazw: zbroje i narzedzia (`diamentowy set`, `zelazna zbroja`,
 
 ## Co bot robi sam
 - **Instynkt samozachowawczy:** ucieka z lawy, wyplywa z wody, ocenia zagrozenie od mobow i walczy albo ucieka.
+- **Warden i deep dark:** nie schodzi glebiej, gdy pod nim jest sculk, i zawraca tunel przed sculkiem. Gdy pojawi sie
+  warden, przerywa zadanie i ucieka schodami, ktorymi zszedl; to miejsce potem omija przy kopaniu.
 - **Jedzenie:** je, gdy glod lub zdrowie spadnie ponizej 4 ikon; bez jedzenia idzie polowac.
 - **Narzedzia:** robi kilof potrzebny do danej rudy (drewniany -> kamienny -> zelazny), nowy, gdy stary sie zepsuje.
 - **Skrzynie (tylko LAN):** w trakcie zadan zaglada do znalezionych skrzyn i bierze lepsze rzeczy; bez zadania pyta "Moge ja otworzyc?".

@@ -140,7 +140,7 @@ function ripeOrNotCrop(p) {
 function findBlocks(names, max = 32, dist = 64) {
   const ids = names.map(n => mcData.blocksByName[n]?.id).filter(x => x !== undefined)
   return bot.findBlocks({ matching: ids, maxDistance: dist, count: max + unreachable.size + 32 })
-    .filter(p => !unreachable.has(posKey(p)) && ripeOrNotCrop(p))
+    .filter(p => !unreachable.has(posKey(p)) && ripeOrNotCrop(p) && !nearDangerZone(p, 24))
     .slice(0, max)
 }
 
@@ -316,10 +316,18 @@ async function stepTo(dir, dy) {
 
 // schodami w dol do wysokosci y (schody, nie pionowy szyb - da sie wyjsc i nie spada sie w dziure)
 async function digDownTo(y) {
-  let dir = facingAxis()
+  let dir = awayFromDanger() || facingAxis()
+  mineEntrance = bot.entity.position.floored() // tedy uciekamy, gdyby przyszedl warden
   say(`Kopie schodami w dol do y=${y}.`)
   for (let i = 0; i < 200 && running && bot.entity.position.y > y + 0.5; i++) {
     setStatus(`kopie schodami w dol: jestem na y=${Math.floor(bot.entity.position.y)}, cel y=${y}`)
+    const sculk = sculkNear(8)
+    if (sculk) {
+      // deep dark: glebiej czujniki sculk przywolalyby wardena - zostajemy na tej wysokosci
+      markDangerZone(sculk.position)
+      say(`Pode mna deep dark (sculk) - nie schodze nizej niz y=${Math.floor(bot.entity.position.y)}, bo moze przyjsc warden.`)
+      return true
+    }
     try { dir = await stepTo(dir, -1) } catch (e) { console.log('[bot] schody:', e.message); return false }
     await lootIfSeen() // np. skrzynie w kopalniach
   }
@@ -328,9 +336,17 @@ async function digDownTo(y) {
 
 // tunel 1x2 o dlugosci len; konczy wczesniej, gdy w zasiegu pojawi sie szukana ruda
 async function stripMine(names, len) {
-  let dir = facingAxis()
+  let dir = awayFromDanger() || facingAxis()
   for (let i = 0; i < len && running; i++) {
     setStatus(`draze tunel na y=${Math.floor(bot.entity.position.y)} (${i}/${len} blokow), szukam ${names[0].replace('deepslate_', '')}`)
+    const sculk = sculkNear(8)
+    if (sculk) {
+      // tunel wchodzi w deep dark - zawracamy, zanim czujnik nas uslyszy
+      const fresh = !nearDangerZone(sculk.position, 16)
+      markDangerZone(sculk.position)
+      if (fresh) say('Przed nami deep dark (sculk) - zmieniam kierunek, zeby nie obudzic wardena.')
+      dir = awayFromDanger() || { x: -dir.x, z: -dir.z }
+    }
     if (findBlocks(names, 1, 10).length) return true
     try { dir = await stepTo(dir, 0) } catch (e) { console.log('[bot] tunel:', e.message); return false }
     await lootIfSeen()
@@ -563,6 +579,39 @@ function findLand(radius = 14) {
   return best
 }
 
+// ---------- deep dark i warden ----------
+// miejsca, gdzie byl warden albo sculk (deep dark) - przy kopaniu trzymamy sie od nich z daleka
+const dangerZones = []
+let lastWardenSeen = 0
+let mineEntrance = null // gora schodow ostatniej kopalni - droga ucieczki
+const SCULK = ['sculk_shrieker', 'sculk_sensor', 'calibrated_sculk_sensor', 'sculk_catalyst', 'sculk']
+
+function markDangerZone(pos) {
+  if (dangerZones.some(z => Math.hypot(z.x - pos.x, z.z - pos.z) < 16)) return
+  dangerZones.push({ x: Math.floor(pos.x), z: Math.floor(pos.z) })
+  console.log(`[bot] niebezpieczne miejsce (deep dark/warden) na ${Math.floor(pos.x)} ${Math.floor(pos.z)}`)
+}
+
+function nearDangerZone(pos, r) {
+  return dangerZones.find(z => Math.hypot(z.x - pos.x, z.z - pos.z) < r)
+}
+
+// kierunek (po osi) od najblizszej strefy zagrozenia, albo null gdy zadnej w poblizu
+function awayFromDanger() {
+  const p = bot.entity.position
+  const z = nearDangerZone(p, 96)
+  if (!z) return null
+  const dx = p.x - z.x
+  const dz = p.z - z.z
+  return Math.abs(dx) > Math.abs(dz) ? { x: Math.sign(dx) || 1, z: 0 } : { x: 0, z: Math.sign(dz) || 1 }
+}
+
+// sculk w poblizu = deep dark, gdzie czujniki i skrzeczace bloki przywoluja wardena
+function sculkNear(r) {
+  const ids = SCULK.map(n => mcData.blocksByName[n]?.id).filter(x => x !== undefined)
+  return bot.findBlock({ matching: ids, maxDistance: r })
+}
+
 let busy = false
 async function survivalTick() {
   if (busy || !bot.entity || !mcData || bot.health <= 0) return
@@ -594,7 +643,39 @@ async function survivalTick() {
       setMode('normal')
     }
 
-    // 3. zagrozenie od mobow
+    // 3. warden: nie do pokonania - przerywamy zadanie (kopanie robi halas, ktory go przyciaga)
+    //    i uciekamy schodami, ktorymi zeszlismy, a jak ich nie ma - jak najdalej od niego
+    const warden = bot.nearestEntity(e => e.name === 'warden' && e.position.distanceTo(bot.entity.position) < 40)
+    if (warden) {
+      lastWardenSeen = Date.now()
+      markDangerZone(warden.position)
+      if (mode !== 'warden') {
+        if (running) running = false
+        setMode('warden', 'Warden! Przerywam zadanie i uciekam.')
+      }
+      bot.pvp.stop()
+      bot.setControlState('sprint', true)
+      // cel ustawiamy, gdy go nie ma (konczace sie zadanie go kasuje) albo gdy doszlismy do wyjscia, a warden nadal blisko
+      const nearExit = mineEntrance && mineEntrance.distanceTo(bot.entity.position) < 3
+      if (!bot.pathfinder.goal || (nearExit && !(bot.pathfinder.goal instanceof goals.GoalInvert))) {
+        bot.pathfinder.setGoal(mineEntrance && !nearExit
+          ? new goals.GoalNear(mineEntrance.x, mineEntrance.y, mineEntrance.z, 1)
+          : new goals.GoalInvert(new goals.GoalFollow(warden, 48)), true)
+      }
+      return
+    }
+    if (mode === 'warden') {
+      // warden znika z oczu; czekamy chwile, czy nie wroci, i dopiero wtedy sie uspokajamy
+      if (Date.now() - lastWardenSeen > 15000) {
+        bot.pathfinder.setGoal(null)
+        bot.setControlState('sprint', false)
+        setMode('normal')
+        say('Ucieklem przed wardenem. To miejsce bede omijal przy kopaniu.')
+      }
+      return
+    }
+
+    // 4. zagrozenie od pozostalych mobow
     const near = threats(running ? 12 : 6)
     const threat = near.reduce((s, e) => s + DANGER[e.name], 0)
     const power = myPower()
