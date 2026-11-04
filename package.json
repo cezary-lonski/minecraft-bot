@@ -1,6 +1,6 @@
 {
   "name": "minecraft-bot",
-  "version": "0.1.0-beta",
+  "version": "0.2.0-beta",
   "description": "Bot do Minecrafta (Mineflayer) sterowany komendami z czatu po polsku",
   "main": "bot.js",
   "scripts": {
