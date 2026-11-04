@@ -119,7 +119,9 @@ budowli, ktora postawil (pamieta, gdzie i jak obrocona stoi - plik builds.json):
 - **brakujace okna**: szyby, a w palacu endu fioletowe witraze, jesli budowa szla bez nich.
 
 Wstawia rzeczy tylko w puste miejsca - niczego nie burzy (poza otworami na drabiny).
-Budowle postawione starsza wersja: postaw bota tam, gdzie zaczynal budowe, obroc tak jak wtedy i napisz `wystroj <budowla> tutaj`.
+Budowle postawione starsza wersja (bot ich nie pamieta): postaw bota tam, gdzie zaczynal budowe - albo przy palacu endu
+na samym szczycie srodkowej iglicy, na najwyzszym end rodzie - i napisz `wystroj <budowla>`. Bot sam sprawdzi 4 mozliwe
+obroty, porowna z blokami w swiecie i wybierze pasujacy (potrzebuje min. 60% zgodnosci), a potem zapamieta budowle.
 
 W kreatywnym ozdoby (szyby, witraze, pochodnie) bot bierze z menu bez pytania. W survivalu, gdy ich brakuje, pyta: "Potrzebuje jeszcze: 3 x glass_pane. Mam po nie pojsc czy budowac bez nich?" -
 odpowiedz `pojdz` albo `buduj bez` (bez odpowiedzi przez 90 s buduje bez nich).

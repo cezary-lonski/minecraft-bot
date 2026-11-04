@@ -2766,6 +2766,40 @@ function decorPlan(type) {
   return replaceInterior(p)
 }
 
+// Punkty, na ktorych mozna stanac botem, zeby rozpoznal stara budowle (lokalnie: x, y stop, z).
+// Palac endu: na samym szczycie srodkowej iglicy - najwyzszy end rod jest na y=30, wiec stopy bota na y=31.
+const ANCHORS = { 'palac endu': { x: 0, y: 31, z: 14, where: 'na samym szczycie srodkowej iglicy (na najwyzszym end rodzie)' } }
+const FRONTS = [{ x: 0, z: 1 }, { x: 0, z: -1 }, { x: 1, z: 0 }, { x: -1, z: 0 }]
+
+// Szuka budowli wokol bota: probuje 4 obrotow i dwoch punktow startu (bot stoi tam, gdzie zaczynal budowe,
+// albo na punkcie zaczepienia z ANCHORS) i sprawdza, jaka czesc blokow planu naprawde stoi w swiecie.
+function locateBuild(type) {
+  const bt = BUILD_TYPES.find(x => x.type === type)
+  const solid = PLAN_FOR_TYPE[type]().filter(c => c.block !== 'air' && !c.optional)
+  const step = Math.max(1, Math.floor(solid.length / 300))
+  const sample = solid.filter((c, i) => i % step === 0)
+  const feet = bot.entity.position.floored()
+  const anchor = ANCHORS[type]
+  let best = null
+  for (const front of FRONTS) {
+    const origins = [feet.offset(front.x * bt.ahead, 0, front.z * bt.ahead)]
+    if (anchor) {
+      const off = toWorld(new Vec3(0, 0, 0), front, anchor.x, anchor.y, anchor.z)
+      origins.push(feet.offset(-off.x, -off.y, -off.z))
+    }
+    for (const origin of origins) {
+      let hits = 0
+      for (const c of sample) {
+        const blk = bot.blockAt(toWorld(origin, front, c.x, c.y, c.z))
+        if (blk && sameKind(blk.name, c.block)) hits++
+      }
+      const score = hits / sample.length
+      if (!best || score > best.score) best = { origin, front, score }
+    }
+  }
+  return best
+}
+
 // "wystroj <budowla> [tutaj]"
 function decorCommand(text) {
   const t = stripPl(text).trim()
@@ -2773,18 +2807,22 @@ function decorCommand(text) {
   const bt = matchBuildType(t.replace(/\s*\b(tutaj|tu)$/, ''))
   if (!bt) { say('Co wystroic? dom, dom villagera, zamek, zamczysko, palac, palac endu, baza podziemna'); return }
   let origin, front
-  if (here) {
-    // bot stoi tam, gdzie zaczynal budowe, i patrzy w te sama strone
-    front = facingAxis()
-    origin = bot.entity.position.floored().offset(front.x * bt.ahead, 0, front.z * bt.ahead)
-  } else {
-    const rec = [...builds].reverse().find(b => b.type === bt.type && (!b.dim || !bot.game?.dimension || b.dim === bot.game.dimension))
-    if (!rec) {
-      say(`Nie pamietam, gdzie stoi ${bt.type} (budowany starsza wersja?). Postaw mnie tam, gdzie zaczynalem budowe, obroc tak jak wtedy i napisz "wystroj ${bt.type} tutaj".`)
-      return
-    }
+  const rec = !here && [...builds].reverse().find(r => r.type === bt.type && (!r.dim || !bot.game?.dimension || r.dim === bot.game.dimension))
+  if (rec) {
     origin = new Vec3(rec.origin.x, rec.origin.y, rec.origin.z)
     front = rec.front
+  } else {
+    // budowla nieznana (np. z wczesniejszej wersji) - rozpoznajemy ja z miejsca, w ktorym stoi bot
+    const found = locateBuild(bt.type)
+    if (!found || found.score < 0.6) {
+      const anchor = ANCHORS[bt.type]
+      say(`Nie rozpoznaje tu: ${bt.type}. Postaw mnie ${anchor ? anchor.where + ' albo ' : ''}tam, gdzie zaczynalem budowe, i napisz "wystroj ${bt.type}".`)
+      return
+    }
+    say(`Rozpoznalem ${bt.type} (zgodnosc ${Math.round(found.score * 100)}%).`)
+    origin = found.origin
+    front = found.front
+    recordBuild(bt.type, origin, front) // nastepnym razem juz bedzie wiadomo
   }
   const plan = decorPlan(bt.type)
   if (!plan) { say(`Nie mam pomyslu na wystroj: ${bt.type}.`); return }
