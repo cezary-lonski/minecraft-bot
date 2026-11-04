@@ -74,6 +74,26 @@ function progressText() {
 let activeTasks = 0
 let mcData
 
+// pytanie do gracza w trakcie zadania, np. "Mam po nie pojsc czy budowac bez nich?".
+// options: [[regex odpowiedzi (bez polskich znakow), wartosc], ...]; bez odpowiedzi po timeoutMs zwraca def.
+let pendingQuestion = null
+function askUser(question, options, timeoutMs, def, timeoutText) {
+  if (pendingQuestion) pendingQuestion.resolve(def) // stare pytanie przepada
+  say(question)
+  return new Promise(resolve => {
+    const finish = value => {
+      clearTimeout(timer)
+      if (pendingQuestion?.resolve === finish) pendingQuestion = null
+      resolve(value)
+    }
+    const timer = setTimeout(() => {
+      if (timeoutText) say(timeoutText)
+      finish(def)
+    }, timeoutMs)
+    pendingQuestion = { options, resolve: finish, def }
+  })
+}
+
 // wspolna obudowa dlugich zadan: jedno naraz, "stop" je przerywa (running = false), a po zakonczeniu bot staje
 async function task(name, fn) {
   if (running) { say(`Jestem zajety (${currentTask}), napisz "stop".`); return }
@@ -1868,12 +1888,25 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
   // Jak sie nie uda - w tym miejscu zostaje puste miejsce zamiast zatrzymywac cala budowe.
   const extras = {}
   for (const c of cells) if (c.optional) extras[c.block] = (extras[c.block] || 0) + 1
-  for (const [name, n] of Object.entries(extras)) {
+  const lacking = Object.entries(extras).filter(([name, n]) => haveOf(name) < n)
+  if (lacking.length) {
+    setStatus(`czekam na odpowiedz: zdobyc ozdoby na ${label} czy budowac bez nich`)
+    const list = lacking.map(([name, n]) => `${n - haveOf(name)} x ${name}`).join(', ')
+    const choice = await askUser(`Potrzebuje jeszcze: ${list}. Mam po nie pojsc czy budowac bez nich? (pojdz / buduj bez)`,
+      // cale wiadomosci, zeby np. "idz do bazy" nie zostalo wziete za odpowiedz "idz"
+      [[/^(pojdz|idz|lec|tak|zdobadz|dawaj)( po nie)?$/, 'go'], [/^(buduj bez( nich)?|bez( nich)?|nie|buduj)$/, 'skip']],
+      90000, 'skip', 'Nie dostalem odpowiedzi - buduje bez nich.')
     if (!running) return false
-    if (haveOf(name) >= n) continue
-    say(`Zdobywam jeszcze ${name} x${n} (ozdoby) - jak sie nie uda, zostawie puste miejsce.`)
-    setStatus(`zbieram ozdoby na ${label}: ${name} (mam ${haveOf(name)}/${n})`)
-    try { await obtain(name, n) } catch (e) { console.log('[bot] ozdoby:', e.message) }
+    if (choice === 'go') {
+      say('Dobra, ide po nie.')
+      for (const [name, n] of lacking) {
+        if (!running) return false
+        setStatus(`zbieram ozdoby na ${label}: ${name} (mam ${haveOf(name)}/${n})`)
+        try { await obtain(name, n) } catch (e) { console.log('[bot] ozdoby:', e.message) }
+      }
+    } else {
+      say('Dobra, buduje bez nich.')
+    }
   }
   for (const c of cells) if (c.optional && haveOf(c.block) < cells.filter(o => o.block === c.block).length) c.block = 'air'
 
@@ -2295,6 +2328,12 @@ function listWaypoints() {
   say(names.length ? 'Punkty: ' + names.map(n => `${n} (${waypoints[n].x} ${waypoints[n].y} ${waypoints[n].z})`).join(', ') : 'Nie mam zapisanych punktow. Uzyj "zapisz <nazwa>".')
 }
 
+// nazwa punktu w odmianie: "bazy"/"bazie" -> "baza", "domu" -> "dom", "kopalni" -> "kopalnia"
+function findWaypoint(name) {
+  const cands = [name, name.replace(/(y|e|ie|i)$/, 'a'), name.replace(/(u|em|owi)$/, ''), name.replace(/i$/, 'ia'), name.replace(/(y|e)$/, '')]
+  return cands.find(c => waypoints[c]) || null
+}
+
 function deleteWaypoint(name) {
   if (!waypoints[name]) { say(`Nie ma punktu "${name}".`); return }
   delete waypoints[name]
@@ -2308,10 +2347,11 @@ function goToCommand(args) {
   if (nums.length === 2) return goWithReport(new goals.GoalNearXZ(nums[0], nums[1], 1), `ide do ${nums.join(' ')}`)
   if (nums.length === 3) return goWithReport(new goals.GoalNear(nums[0], nums[1], nums[2], 1), `ide do ${nums.join(' ')}`)
   const name = args.join(' ')
-  const wp = waypoints[name]
+  const wpName = findWaypoint(name)
+  const wp = wpName && waypoints[wpName]
   if (wp) {
     if (wp.dim && bot.game?.dimension && wp.dim !== bot.game.dimension) { say(`Punkt "${name}" jest w innym wymiarze (${wp.dim}).`); return }
-    return goWithReport(new goals.GoalNear(wp.x, wp.y, wp.z, 1), `ide do ${name}`)
+    return goWithReport(new goals.GoalNear(wp.x, wp.y, wp.z, 1), `ide do ${wpName}`)
   }
   const username = findPlayerName(name)
   if (username) {
@@ -2775,6 +2815,7 @@ bot.on('chat', (user, msg) => {
 
 function stopAll() {
   running = false
+  if (pendingQuestion) pendingQuestion.resolve(pendingQuestion.def)
   try { bot.pathfinder.setGoal(null); bot.pvp.stop(); bot.stopDigging(); bot.clearControlStates() } catch {}
   if (bot.isSleeping) bot.wake().catch(() => {})
   say('Zatrzymany.')
@@ -2831,6 +2872,11 @@ function handle(user, msg, whisper = false) {
     return
   }
 
+  if (pendingQuestion) {
+    const answer = pendingQuestion.options.find(([re]) => re.test(c))
+    if (answer) { pendingQuestion.resolve(answer[1]); return }
+  }
+
   // te dzialaja zawsze, tez przed wejsciem do swiata
   if (/^(permisja|odbierz|permisje)$/.test(verb)) { permCommand(user, cmd); return }
   if (['stop', 'zostan', 'czekaj', 'stoj'].includes(c)) { stopAll(); return }
@@ -2879,6 +2925,11 @@ function handle(user, msg, whisper = false) {
 
   // --- punkty ---
   if (c === 'ustaw dom') return saveWaypoint('dom')
+  if (/^(baza|ustaw baze|zapisz baze|tu jest baza|to jest baza|to baza|tu baza)$/.test(c)) {
+    saveWaypoint('baza')
+    return say('To miejsce jest teraz moja baza. "idz do bazy" - wracam tu najkrotsza droga.')
+  }
+  if (/^((idz |wroc |chodz )?do bazy|wroc|baza\?)$/.test(c)) return goToCommand(['baza'])
   if (verb === 'zapisz') return args[0] ? saveWaypoint(args.join(' ')) : say('Uzycie: zapisz <nazwa>')
   if (c === 'punkty') return listWaypoints()
   if (verb === 'usun') return args[0] ? deleteWaypoint(args.join(' ')) : say('Uzycie: usun <nazwa punktu>')

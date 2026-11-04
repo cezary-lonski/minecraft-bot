@@ -94,10 +94,15 @@ Bot buduje przed soba (w kierunku, w ktorym patrzy), sam zbiera materialy i wyro
 Wszystkie materialy bot zdobywa sam (scina drzewa, kopie bruk, craftuje drzwi, skrzynie, ploty). Ozdoby tez probuje zdobyc:
 szyby (piasek -> szklo w piecu -> szyby) i pochodnie (wegiel + patyki); jak sie nie uda, zostawia w tym miejscu puste pole.
 
+Gdy brakuje ozdob (szyby, pochodnie), bot pyta: "Potrzebuje jeszcze: 3 x glass_pane. Mam po nie pojsc czy budowac bez nich?" -
+odpowiedz `pojdz` albo `buduj bez` (bez odpowiedzi przez 90 s buduje bez nich).
+
 ### Punkty
 | Komenda | Dzialanie |
 |---|---|
-| `zapisz <nazwa>`, `ustaw dom` | zapisuje aktualna pozycje |
+| `baza` (`ustaw baze`) | zapisuje miejsce, w ktorym stoi bot, jako baze |
+| `idz do bazy` (`wroc`, `do bazy`) | wraca do bazy najkrotsza droga |
+| `zapisz <nazwa>`, `ustaw dom` | zapisuje aktualna pozycje; potem `idz do <nazwa>` (dziala tez odmiana: "do domu", "do kopalni") |
 | `dom` | wraca do punktu "dom" |
 | `punkty`, `usun <nazwa>` | lista / usuwanie |
 | `gdzie` | wspolrzedne i wymiar |
