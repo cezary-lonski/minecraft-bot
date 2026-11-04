@@ -1,4 +1,8 @@
+const fs = require('fs')
+const pathLib = require('path')
 const mineflayer = require('mineflayer')
+// folder na pliki bota (punkty, budowle, uprawnienia); GUI podaje wlasny, bo program jest tylko do odczytu
+const DATA_DIR = process.env.MC_DATA_DIR || __dirname
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const collectBlock = require('mineflayer-collectblock').plugin
 const pvp = require('mineflayer-pvp').plugin
@@ -1659,7 +1663,8 @@ const GATHER = {
   kelp: [['kelp', 'kelp_plant'], /^kelp$/],
   cocoa_beans: [['cocoa'], /^cocoa_beans$/],
   glowstone_dust: [['glowstone'], /^glowstone_dust$/],
-  quartz: [['nether_quartz_ore'], /^quartz$/]
+  quartz: [['nether_quartz_ore'], /^quartz$/],
+  poppy: [['poppy'], /^poppy$/]
 }
 // co powstaje w piecu z czego
 const SMELT_FROM = {
@@ -2157,7 +2162,29 @@ async function removeScaffolding(found) {
   return await removeBlocksCarefully(found)
 }
 
+// czerwony blok w podlozu tam, gdzie bot stal, zaczynajac budowe - zeby bylo wiadomo, gdzie stanac przy "wystroj" i "zburz"
+const MARKERS = ['red_concrete', 'red_wool', 'red_terracotta', 'redstone_block', 'red_concrete_powder', 'red_glazed_terracotta']
+async function placeStartMarker(feet) {
+  const spot = feet.offset(0, -1, 0)
+  if (MARKERS.includes(bot.blockAt(spot)?.name)) return
+  if (isCreative()) await creativeGive('red_concrete', 1)
+  let it = bot.inventory.items().find(i => MARKERS.includes(i.name))
+  if (!it) {
+    say('Robie czerwony znacznik miejsca startu (czerwona welna).')
+    try { await obtain('red_wool', 1) } catch {}
+    it = bot.inventory.items().find(i => MARKERS.includes(i.name))
+  }
+  if (!it) { say('Nie mam czerwonego bloku na znacznik - zapamietaj, gdzie stalem.'); return }
+  try {
+    await goNearCell(spot)
+    await clearBlock(spot)
+    await placeBlockAt(it.name, spot)
+    say(`Postawilem czerwony znacznik startu (${spot.x} ${spot.y} ${spot.z}) - stan na nim przy "wystroj" albo "zburz".`)
+  } catch (e) { console.log('[bot] znacznik:', e.message) }
+}
+
 async function buildPlan(label, plan, origin, front, opts = {}) {
+  const startFeet = bot.entity.position.floored() // tu stoi bot, gdy zaczyna budowe
   if (opts.type && !opts.decor) recordBuild(opts.type, origin, front)
   const cells = plan.map(c => ({ ...c, pos: toWorld(origin, front, c.x, c.y, c.z) }))
   for (const c of cells) if (c.temp) c.block = 'dirt' // tymczasowe podpory (np. pod kropka nad "i"), na koncu znikaja
@@ -2288,6 +2315,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
         try { await goNearCell(c.pos); await clearBlock(c.pos) } catch {}
       }
     }
+    if (running && opts.type && !opts.decor) await placeStartMarker(startFeet)
     if (running) say(failed ? `${label} gotowe, ale ${failed} blokow nie udalo sie postawic.` : `${label} gotowe!`)
     return true
   } finally {
@@ -2847,7 +2875,7 @@ function whereIsBuild(bt, here, verb) {
   const found = locateBuild(bt.type)
   if (!found || found.score < 0.6) {
     const anchor = ANCHORS[bt.type]
-    say(`Nie rozpoznaje tu: ${bt.type}. Postaw mnie ${anchor ? anchor.where + ' albo ' : ''}tam, gdzie zaczynalem budowe, i napisz "${verb} ${bt.type}".`)
+    say(`Nie rozpoznaje tu: ${bt.type}. Postaw mnie na czerwonym znaczniku (tam, gdzie zaczynalem budowe)${anchor ? ' albo ' + anchor.where : ''} i napisz "${verb} ${bt.type}".`)
     return null
   }
   say(`Rozpoznalem ${bt.type} (zgodnosc ${Math.round(found.score * 100)}%).`)
@@ -3148,13 +3176,11 @@ function buildCommand(text) {
 }
 
 // ---------- pliki z danymi (punkty, uprawnienia) ----------
-const fs = require('fs')
-const pathLib = require('path')
 function loadJson(file, fallback) {
-  try { return JSON.parse(fs.readFileSync(pathLib.join(__dirname, file), 'utf8')) } catch { return fallback }
+  try { return JSON.parse(fs.readFileSync(pathLib.join(DATA_DIR, file), 'utf8')) } catch { return fallback }
 }
 function saveJson(file, data) {
-  try { fs.writeFileSync(pathLib.join(__dirname, file), JSON.stringify(data, null, 2)) } catch (e) { console.log(`[bot] zapis ${file}:`, e.message) }
+  try { fs.writeFileSync(pathLib.join(DATA_DIR, file), JSON.stringify(data, null, 2)) } catch (e) { console.log(`[bot] zapis ${file}:`, e.message) }
 }
 
 // ---------- chodzenie za graczem i ochrona ----------
@@ -3636,14 +3662,14 @@ function huntCommand(args) {
 // ---------- uprawnienia: kto moze wydawac komendy ----------
 // wlasciciel: nick gracza, ktory zawsze moze wydawac komendy (podaje sie w start.js albo zmienna MC_OWNER)
 const OWNER = process.env.MC_OWNER || ''
-const PERM_FILE = require('path').join(__dirname, 'permissions.json')
+const PERM_FILE = pathLib.join(DATA_DIR, 'permissions.json')
 let allowed = new Set(OWNER ? [OWNER.toLowerCase()] : [])
 try {
-  for (const n of JSON.parse(require('fs').readFileSync(PERM_FILE, 'utf8')).allowed || []) allowed.add(n.toLowerCase())
+  for (const n of JSON.parse(fs.readFileSync(PERM_FILE, 'utf8')).allowed || []) allowed.add(n.toLowerCase())
 } catch {}
 
 function savePerms() {
-  try { require('fs').writeFileSync(PERM_FILE, JSON.stringify({ allowed: [...allowed] }, null, 2)) } catch (e) { console.log('[bot] zapis uprawnien:', e.message) }
+  try { fs.writeFileSync(PERM_FILE, JSON.stringify({ allowed: [...allowed] }, null, 2)) } catch (e) { console.log('[bot] zapis uprawnien:', e.message) }
 }
 // w singleplayerze (LAN) w swiecie jest tylko gracz wlasciciel, wiec slucha kazdego z czatu
 const LAN = process.env.MC_MODE === 'lan'
@@ -3837,6 +3863,30 @@ function handle(user, msg, whisper = false) {
 
   // nieznana komenda: odpowiadamy tylko na /msg i w konsoli, zeby nie odpowiadac na zwykla rozmowe na czacie
   if (whisper || !user || LAN) say(`Nie znam komendy "${text}". Napisz "komendy".`)
+}
+
+// ---------- stan dla GUI (MC_GUI=1): co sekunde jedna linia JSON na wyjsciu ----------
+if (process.env.MC_GUI === '1') {
+  setInterval(() => {
+    const e = bot.entity
+    const inv = {}
+    try { for (const it of bot.inventory.items()) inv[it.name] = (inv[it.name] || 0) + it.count } catch {}
+    const status = {
+      connected: !!e && !!mcData,
+      username: bot.username,
+      health: bot.health, food: bot.food,
+      pos: e ? { x: Math.floor(e.position.x), y: Math.floor(e.position.y), z: Math.floor(e.position.z) } : null,
+      dim: bot.game?.dimension, gameMode: bot.game?.gameMode, time: bot.time?.timeOfDay,
+      task: currentTask, step: taskStatus, mode,
+      question: pendingQuestion ? true : false,
+      held: bot.heldItem?.name || null,
+      armor: [5, 6, 7, 8].map(sl => bot.inventory?.slots?.[sl]?.name || null),
+      inventory: inv,
+      waypoints,
+      builds: builds.map(b => ({ type: b.type, origin: b.origin }))
+    }
+    process.stdout.write('@@STATUS ' + JSON.stringify(status) + '\n')
+  }, 1000)
 }
 
 bot.on('death', () => { say('Zginalem, respawn...'); })
