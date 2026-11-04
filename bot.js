@@ -2191,7 +2191,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
           setStatus(`buduje ${label}: ${placed}/${total} blokow (warstwa ${y - layers[0] + 1}/${layers.length})`)
           try {
             await goNearCell(c.pos, c.facing && worldDir(front, c.facing))
-            await placeBlockAt(it.name, c.pos)
+            await placeBlockAt(it.name, c.pos, c.attach && worldDir(front, c.attach))
             placed++
             if (CONTAINERS.includes(c.block)) { ownChests.add(posKey(c.pos)); saveJson('chests.json', [...ownChests]) }
           } catch (e) {
@@ -2426,7 +2426,8 @@ function endTower(p, cx, cz, y0, y1, big) {
       for (let y = y0; y < y1; y++) {
         if (roundCell(dx, dz, r0, R)) {
           const band = (y - y0) % 5 === 4
-          const window = !band && (dx === 0 || dz === 0) && (y - y0) % 5 >= 1 && (y - y0) % 5 <= 2
+          // bez okien od strony -z: tam wisi drabina (drabiny nie trzymaja sie szkla)
+          const window = !band && (dx === 0 || dz === 0) && !(dx === 0 && dz < 0) && (y - y0) % 5 >= 1 && (y - y0) % 5 <= 2
           p.push({ x, y, z, block: band ? 'purpur_block' : window ? 'purple_stained_glass' : 'end_stone_bricks', optional: window })
         } else if (Math.sqrt(dx * dx + dz * dz) <= r0) {
           p.push({ x, y, z, block: 'air' })
@@ -2446,6 +2447,10 @@ function endTower(p, cx, cz, y0, y1, big) {
   p.push({ x: cx, y, z: cz, block: 'purpur_pillar' }, { x: cx, y: y + 1, z: cz, block: 'purpur_pillar' })
   if (big) p.push({ x: cx, y: y + 2, z: cz, block: 'purpur_pillar' })
   p.push({ x: cx, y: y + (big ? 3 : 2), z: cz, block: 'end_rod' }, { x: cx, y: y + (big ? 4 : 3), z: cz, block: 'end_rod' })
+  // drabina przy scianie (od strony -z), az do kopuly; nad nia dziura w kopule, zeby wyjsc na gore
+  const lz = cz - (big ? 2 : 1)
+  for (let ly = y0; ly <= y1; ly++) p.push({ x: cx, y: ly, z: lz, block: 'ladder', attach: { x: 0, z: -1 } })
+  for (let ly = y1 + 1; ly <= y1 + 1; ly++) p.push({ x: cx, y: ly, z: lz, block: 'air' })
 }
 
 function planEndPalace() {
@@ -2511,6 +2516,10 @@ function planEndPalace() {
   // 3) wieze narozne i wieza srodkowa z kopula
   for (const [cx, cz] of [[-7, 7], [7, 7], [-7, 21], [7, 21]]) endTower(p, cx, cz, 1, 16, false)
   endTower(p, 0, 14, 11, 23, true)
+  // drabina z pietra na dach przy tylnej scianie (z dziura w dachu) i drzwi z dachu do wiezy srodkowej
+  for (let y = 6; y <= 10; y++) p.push({ x: 4, y, z: 20, block: 'ladder', attach: { x: 0, z: 1 } })
+  p.push({ x: 4, y: 11, z: 20, block: 'air' })
+  p.push({ x: 3, y: 11, z: 14, block: 'air' }, { x: 3, y: 12, z: 14, block: 'air' }) // od wschodu - od poludnia wisi drabina
   return replaceInterior(p)
 }
 
@@ -2957,10 +2966,11 @@ function haveCommand(word) {
 
 // ---------- stawianie blokow ----------
 // stawia blok w miejscu target (musi byc wolne); klika w sasiedni pelny blok, tak jak gracz
-async function placeBlockAt(itemName, target) {
+async function placeBlockAt(itemName, target, attach) {
   const here = bot.blockAt(target)
   if (here && here.boundingBox === 'block') throw new Error(`miejsce jest zajete (${here.name})`)
-  for (const [dx, dy, dz] of [[0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]]) {
+  const sides = attach ? [[attach.x, 0, attach.z]] : [[0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]]
+  for (const [dx, dy, dz] of sides) {
     const ref = bot.blockAt(target.offset(dx, dy, dz))
     if (!ref || ref.boundingBox !== 'block') continue
     const it = bot.inventory.items().find(i => i.name === itemName)
