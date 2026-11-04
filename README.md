@@ -96,6 +96,10 @@ Bot buduje przed soba (w kierunku, w ktorym patrzy), sam zbiera materialy i wyro
 | `buduj farma trzciny` | trzcina posadzona przy wodzie | trzcina |
 | `buduj farma zwierzat` | zagroda 9x9 z plotu i furtka (zwierzeta trzeba zwabic) | 31 plotow, furtka |
 
+Po budowie bot sam rozbiera rusztowania (slupki z ziemi/bruku, ktore stawia pathfinder, zeby siegnac wysoko), a postawione
+przez siebie skrzynie traktuje jak swoje (nie pyta o nie). Przy budowlach postawionych wczesniej: `rozbierz rusztowania`
+- usuwa samotne slupki (min. 2 bloki) w promieniu 20 blokow, nie ruszajac murow i blankow.
+
 Wszystkie materialy bot zdobywa sam (scina drzewa, kopie bruk, craftuje drzwi, skrzynie, ploty). Ozdoby tez probuje zdobyc:
 szyby (piasek -> szklo w piecu -> szyby) i pochodnie (wegiel + patyki); jak sie nie uda, zostawia w tym miejscu puste pole.
 

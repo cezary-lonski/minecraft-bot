@@ -1193,7 +1193,7 @@ function run() {
 const HELP = [
   'Zadania: start, etap <drewno|kamien|jedzenie|zelazo|diamenty>, zdobadz <surowiec|przedmiot|jedzenie> [ile], poluj [zwierze] [ile], przepal, scraftuj <co>, stop',
   'Ruch: tu, idz <ile> <przod|tyl|lewo|prawo>, idz do <x z | punkt | gracz>, chodz za mna, ochraniaj [gracz], zabij <gracz>, spij',
-  'Budowa: buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
+  'Budowa: rozbierz rusztowania, buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
   'Inne: status, co robisz, diag, chat <tekst>, permisja <nick>, odbierz <nick>, permisje'
@@ -2027,6 +2027,71 @@ const protectedItems = new Set()
 // duze budowle (zamczysko, palac) nie mieszcza sie w ekwipunku na raz - materialy zbieramy partiami, warstwa po warstwie
 const BATCH_LIMIT = 600
 
+// "rozbierz rusztowania": przy budowlach juz stojacych nie znamy planu, wiec szukamy samotnych slupkow -
+// co najmniej 2 bloki ziemi/bruku jeden na drugim, kazdy bez sasiadow po bokach (sciany i blanki maja sasiadow
+// albo sa pojedyncze, wiec zostaja)
+function looseColumns(radius) {
+  const isolated = p => {
+    const b = bot.blockAt(p)
+    if (!b || !SCAFFOLD.includes(b.name)) return false
+    return [[1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dz]) => !isSolid(p.offset(dx, 0, dz)))
+  }
+  const center = bot.entity.position.floored()
+  const blocks = []
+  for (let x = -radius; x <= radius; x++) {
+    for (let z = -radius; z <= radius; z++) {
+      let run = []
+      for (let y = 40; y >= -12; y--) {
+        const p = center.offset(x, y, z)
+        if (isolated(p)) { run.push(p); continue }
+        // koniec slupka: liczy sie, gdy ma >= 2 bloki i stoi na czyms
+        if (run.length >= 2 && isSolid(p)) blocks.push(...run)
+        run = []
+      }
+    }
+  }
+  return blocks
+}
+
+function cleanupCommand() {
+  return task('rozbieranie rusztowan', async () => {
+    const blocks = looseColumns(20).sort((a, b) => b.y - a.y)
+    if (!blocks.length) { say('Nie widze rusztowan w promieniu 20 blokow.'); return }
+    say(`Rozbieram rusztowania: ${blocks.length} blokow.`)
+    let removed = 0
+    for (const p of blocks) {
+      if (!running) break
+      setStatus(`rozbieram rusztowanie (${removed}/${blocks.length})`)
+      try { await goNearCell(p); await clearBlock(p); removed++ } catch (e) { console.log('[bot] rusztowanie:', e.message) }
+    }
+    if (running) say(`Rozebralem ${removed} blokow rusztowania.`)
+  })
+}
+
+async function removeScaffolding(cells, groundY) {
+  const planKeys = new Set(cells.filter(c => c.block !== 'air' && !c.temp).map(c => posKey(c.pos)))
+  const xs = cells.map(c => c.pos.x)
+  const zs = cells.map(c => c.pos.z)
+  const maxY = Math.max(...cells.map(c => c.pos.y)) + 2
+  const found = []
+  for (let x = Math.min(...xs) - 1; x <= Math.max(...xs) + 1; x++) {
+    for (let z = Math.min(...zs) - 1; z <= Math.max(...zs) + 1; z++) {
+      for (let y = groundY; y <= maxY; y++) {
+        const p = new Vec3(x, y, z)
+        const b = bot.blockAt(p)
+        if (b && SCAFFOLD.includes(b.name) && !planKeys.has(posKey(p))) found.push(b)
+      }
+    }
+  }
+  let removed = 0
+  for (const b of found.sort((a, c) => c.position.y - a.position.y)) { // od gory - nie stoimy na tym, co kopiemy
+    if (!running) break
+    setStatus(`rozbieram rusztowanie (${removed}/${found.length})`)
+    try { await goNearCell(b.position); await clearBlock(b.position); removed++ } catch (e) { console.log('[bot] rusztowanie:', e.message) }
+  }
+  return removed
+}
+
 async function buildPlan(label, plan, origin, front, opts = {}) {
   const cells = plan.map(c => ({ ...c, pos: toWorld(origin, front, c.x, c.y, c.z) }))
   for (const c of cells) if (c.temp) c.block = 'dirt' // tymczasowe podpory (np. pod kropka nad "i"), na koncu znikaja
@@ -2111,6 +2176,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
             await goNearCell(c.pos, c.facing && worldDir(front, c.facing))
             await placeBlockAt(it.name, c.pos)
             placed++
+            if (CONTAINERS.includes(c.block)) { ownChests.add(posKey(c.pos)); saveJson('chests.json', [...ownChests]) }
           } catch (e) {
             console.log(`[bot] nie postawilem ${c.block}: ${e.message}`)
             next.push(c)
@@ -2121,7 +2187,15 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
       failed += pending.length
     }
 
-    // 3) tymczasowe podpory znikaja (od gory)
+    // 3) rusztowania: pathfinder, zeby siegnac wysoko, stawia slupki z ziemi/bruku i ich nie rozbiera.
+    //    Wszystko z tych blokow, co stoi w obrysie budowli (+1 blok dookola) od poziomu gruntu w gore, a nie nalezy do planu - kopiemy.
+    if (running) {
+      bot.pathfinder.setMovements(normalMoves)
+      const removed = await removeScaffolding(cells, origin.y)
+      if (removed) say(`Rozebralem ${removed} blokow rusztowania.`)
+    }
+
+    // 4) tymczasowe podpory znikaja (od gory)
     const temps = cells.filter(c => c.temp).sort((a, b) => b.y - a.y)
     if (temps.length && running) {
       bot.pathfinder.setMovements(normalMoves)
@@ -3323,6 +3397,7 @@ function handle(user, msg, whisper = false) {
   if (/^(poluj|upoluj)$/.test(verb)) return huntCommand(args)
   if (c === 'spij' || c === 'idz spac') return sleepCommand()
   if (/^(buduj|zbuduj|postaw budynek)$/.test(verb)) return buildCommand(args.join(' '))
+  if (/^(rozbierz|usun|posprzataj|sprzatnij) rusztowani/.test(c) || c === 'posprzataj') return cleanupCommand()
   if (c === 'przeszukaj' || c === 'przeszukaj skrzynie') return lootCommand()
   if (/^szukaj( skrzyn\w*)?$/.test(c)) return searchChestsCommand()
   if (/^skrzynie (wl|on|tak)/.test(c)) { lootEnabled = true; return say('Bede zagladal do znalezionych skrzyn.') }
