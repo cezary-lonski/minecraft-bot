@@ -77,6 +77,22 @@ Polskie znaki sa opcjonalne (`zdobadz` = `zdobądź`). `komendy` wypisuje skrot 
 | `ochraniaj [gracz]` | chodzi za graczem i bije moby obok niego |
 | `zabij <gracz>` | atakuje gracza (tylko za jego zgoda!) |
 
+### Budowanie
+Bot buduje przed soba (w kierunku, w ktorym patrzy), sam zbiera materialy i wyrownuje teren.
+| Komenda | Co powstaje | Materialy (ok.) |
+|---|---|---|
+| `buduj dom` (`baza`) | dom 7x7: sciany z desek, rogi z pni, drzwi, okna, dach, stol, skrzynia, piec, pochodnia | 124 deski, 16 pni |
+| `buduj dom villagera` | domek 5x5 jak w wiosce, fundament z bruku, dach ze szczytem | 65 desek, 13 pni, 16 bruku |
+| `buduj zamek` | mury 13x13 z blankami, brama, 4 wieze | ok. 450 bruku (dlugo!) |
+| `buduj baza podziemna` | schody 8 w dol i pokoj 7x7x3 ze stolem, piecem, skrzynia i pochodniami | - |
+| `buduj skybase` | slup do y=150 (min. 30 w gore) i platforma 9x9 z murkiem, stolem i skrzynia | ok. 200 bruku |
+| `buduj farma zboza/marchwi/ziemniakow/burakow` | zaorane pole przy wodzie (do 16 blokow) i posadzone nasiona | motyka, nasiona |
+| `buduj farma drzew` | 9 sadzonek w siatce co 4 bloki | sadzonki (zbiera z lisci) |
+| `buduj farma trzciny` | trzcina posadzona przy wodzie | trzcina |
+| `buduj farma zwierzat` | zagroda 9x9 z plotu i furtka (zwierzeta trzeba zwabic) | 31 plotow, furtka |
+
+Okna (szyby) i pochodnie sa ozdoba - jak bot ich nie ma, zostawia puste miejsce.
+
 ### Punkty
 | Komenda | Dzialanie |
 |---|---|

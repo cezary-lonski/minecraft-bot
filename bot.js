@@ -1089,6 +1089,7 @@ function run() {
 const HELP = [
   'Zadania: start, etap <drewno|kamien|jedzenie|zelazo|diamenty>, zdobadz <surowiec|przedmiot|jedzenie> [ile], poluj [zwierze] [ile], przepal, scraftuj <co>, stop',
   'Ruch: tu, idz <ile> <przod|tyl|lewo|prawo>, idz do <x z | punkt | gracz>, chodz za mna, ochraniaj [gracz], zabij <gracz>, spij',
+  'Budowa: buduj dom | zamek | dom villagera | baza podziemna | skybase | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
   'Inne: status, co robisz, diag, chat <tekst>, permisja <nick>, odbierz <nick>, permisje'
@@ -1782,6 +1783,409 @@ async function eatNow() {
   }
 }
 
+// ---------- budowanie: plany budowli ----------
+// Plan to lista komorek {x, y, z, block} we wspolrzednych lokalnych: x w prawo, z do przodu, y w gore,
+// liczonych od punktu przed botem. block === 'air' oznacza "ma byc pusto" (wnetrze, przejscie).
+// Deski i pnie moga byc dowolnego gatunku drewna.
+
+function invItemFor(name) {
+  const items = bot.inventory.items()
+  if (/_planks$/.test(name)) return items.find(i => /_planks$/.test(i.name))
+  if (WOOD_RE.test(name)) return items.find(i => WOOD_RE.test(i.name))
+  return items.find(i => i.name === name)
+}
+
+function sameKind(blockName, want) {
+  if (/_planks$/.test(want)) return /_planks$/.test(blockName)
+  if (WOOD_RE.test(want)) return WOOD_RE.test(blockName)
+  return blockName === want
+}
+
+function haveOf(name) {
+  if (/_planks$/.test(name)) return countMatch(/_planks$/)
+  if (WOOD_RE.test(name)) return countMatch(WOOD_RE)
+  return count(name)
+}
+
+// wspolrzedne lokalne -> swiat
+function toWorld(origin, front, x, y, z) {
+  const right = turnRight(front)
+  return origin.offset(right.x * x + front.x * z, y, right.z * x + front.z * z)
+}
+
+const isSolid = p => { const b = bot.blockAt(p); return !!b && b.boundingBox === 'block' }
+const hasSupport = p => [[0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]].some(([dx, dy, dz]) => isSolid(p.offset(dx, dy, dz)))
+
+// staje w zasiegu reki, ale nie w miejscu, gdzie ma stanac blok
+async function goNearCell(pos) {
+  const dist = bot.entity.position.distanceTo(pos.offset(0.5, 0.5, 0.5))
+  const inside = bot.entity.position.floored().equals(pos) || bot.entity.position.floored().offset(0, 1, 0).equals(pos)
+  if (dist < 4 && !inside) return
+  await bot.pathfinder.goto(new goals.GoalCompositeAll([
+    new goals.GoalNear(pos.x, pos.y, pos.z, 3),
+    new goals.GoalInvert(new goals.GoalNear(pos.x, pos.y, pos.z, 1))
+  ]))
+}
+
+// czym podsypac dziure pod fundamentem
+const SCAFFOLD = ['dirt', 'cobblestone', 'cobbled_deepslate', 'netherrack', 'stone', 'andesite', 'diorite', 'granite']
+async function fillBelow(pos) {
+  let depth = 1
+  while (depth <= 5 && !isSolid(pos.offset(0, -depth, 0))) depth++
+  if (depth > 5) return
+  for (let k = depth - 1; k >= 1; k--) {
+    const it = bot.inventory.items().find(i => SCAFFOLD.includes(i.name))
+    if (!it) return
+    try { await goNearCell(pos.offset(0, -k, 0)); await placeBlockAt(it.name, pos.offset(0, -k, 0)) } catch {}
+  }
+}
+
+// zdobywa materialy: najpierw rzeczy craftowane (drzwi, skrzynia - zjadaja deski), potem deski, na koncu pnie
+async function gatherMaterials(cells, label) {
+  const need = {}
+  for (const c of cells) if (c.block !== 'air') need[c.block] = (need[c.block] || 0) + 1
+  const rank = n => WOOD_RE.test(n) ? 2 : /_planks$/.test(n) ? 1 : 0
+  const names = Object.keys(need).sort((a, b) => rank(a) - rank(b))
+  say(`${label} - potrzebuje: ${names.map(n => `${n} x${need[n]}`).join(', ')}.`)
+  for (const name of names) {
+    if (!running) return false
+    if (haveOf(name) >= need[name]) continue
+    setStatus(`zbieram material na ${label}: ${name} (mam ${haveOf(name)}/${need[name]})`)
+    const ok = WOOD_RE.test(name) ? await collect(woodBlocks(), need[name], WOOD_RE) : await obtain(name, need[name])
+    if (!ok && running) { say(`Nie udalo mi sie zdobyc ${name} na ${label}.`); return false }
+  }
+  return running
+}
+
+async function buildPlan(label, plan, origin, front, opts = {}) {
+  const cells = plan.map(c => ({ ...c, pos: toWorld(origin, front, c.x, c.y, c.z) }))
+  // ozdoby (szyby, pochodnie): jak ich nie ma i nie da sie latwo zdobyc - zostaje puste miejsce
+  for (const c of cells) if (c.optional && haveOf(c.block) < cells.filter(o => o.block === c.block).length) c.block = 'air'
+  if (!await gatherMaterials(cells, label)) return false
+
+  // budujemy bez kopania przez wlasne sciany
+  const buildMoves = new Movements(bot)
+  buildMoves.canDig = false
+  buildMoves.allow1by1towers = true
+  const normalMoves = bot.pathfinder.movements
+  bot.pathfinder.setMovements(buildMoves)
+  const total = cells.filter(c => c.block !== 'air').length
+  let placed = 0
+  let failed = 0
+  try {
+    // 1) teren: od gory wykopujemy to, co przeszkadza (ziemia, trawa, kamien w obrysie)
+    say(`Buduje ${label} (${total} blokow). Najpierw przygotowuje teren.`)
+    bot.pathfinder.setMovements(normalMoves)
+    for (const c of [...cells].sort((a, b) => b.y - a.y)) {
+      if (!running) return false
+      const b = bot.blockAt(c.pos)
+      if (!b || b.boundingBox !== 'block' || sameKind(b.name, c.block)) continue
+      setStatus(`przygotowuje teren pod ${label}`)
+      try { await goNearCell(c.pos); await clearBlock(c.pos) } catch (e) { console.log('[bot] teren:', e.message) }
+    }
+    bot.pathfinder.setMovements(buildMoves)
+
+    // 2) stawianie warstwami od dolu; w warstwie kilka przejsc - blok musi miec sie o co oprzec
+    const layers = [...new Set(cells.map(c => c.y))].sort((a, b) => a - b)
+    for (const y of layers) {
+      let pending = cells.filter(c => c.y === y && c.block !== 'air')
+      for (let pass = 0; pass < (opts.passes || 4) && pending.length && running; pass++) {
+        const next = []
+        for (const c of pending) {
+          if (!running) break
+          const cur = bot.blockAt(c.pos)
+          if (cur && sameKind(cur.name, c.block)) { placed++; continue }
+          if (y === layers[0]) await fillBelow(c.pos)
+          if (!hasSupport(c.pos)) { next.push(c); continue }
+          const it = invItemFor(c.block)
+          if (!it) { failed++; continue }
+          setStatus(`buduje ${label}: ${placed}/${total} blokow (warstwa ${y - layers[0] + 1}/${layers.length})`)
+          try {
+            await goNearCell(c.pos)
+            await placeBlockAt(it.name, c.pos)
+            placed++
+          } catch (e) {
+            console.log(`[bot] nie postawilem ${c.block}: ${e.message}`)
+            next.push(c)
+          }
+        }
+        pending = next
+      }
+      failed += pending.length
+    }
+  } finally {
+    bot.pathfinder.setMovements(normalMoves)
+  }
+  if (running) say(failed ? `${label} gotowe, ale ${failed} blokow nie udalo sie postawic.` : `${label} gotowe!`)
+  return true
+}
+
+// ---------- plany ----------
+function ring(x1, x2, z1, z2, cb) {
+  for (let x = x1; x <= x2; x++) for (let z = z1; z <= z2; z++) if (x === x1 || x === x2 || z === z1 || z === z2) cb(x, z)
+}
+function fill(x1, x2, z1, z2, cb) {
+  for (let x = x1; x <= x2; x++) for (let z = z1; z <= z2; z++) cb(x, z)
+}
+
+// dom 7x7: sciany z desek, rogi z pni, drzwi z przodu, okna, plaski dach, stol, skrzynia, piec, pochodnia
+function planHouse() {
+  const p = []
+  const h = 4
+  fill(-2, 2, 1, 5, (x, z) => { for (let y = 0; y < h; y++) p.push({ x, y, z, block: 'air' }) })
+  for (let y = 0; y < h; y++) {
+    ring(-3, 3, 0, 6, (x, z) => {
+      if (x === 0 && z === 0 && y <= 1) return // drzwi
+      const corner = Math.abs(x) === 3 && (z === 0 || z === 6)
+      const window = y === 2 && ((Math.abs(x) === 3 && z === 3) || (x === 0 && z === 6))
+      p.push({ x, y, z, block: corner ? 'oak_log' : window ? 'glass_pane' : 'oak_planks', optional: window })
+    })
+  }
+  p.push({ x: 0, y: 0, z: 0, block: 'oak_door' }, { x: 0, y: 1, z: 0, block: 'air' })
+  fill(-3, 3, 0, 6, (x, z) => p.push({ x, y: h, z, block: 'oak_planks' }))
+  p.push({ x: -2, y: 0, z: 5, block: 'crafting_table' }, { x: 2, y: 0, z: 5, block: 'chest' },
+    { x: -2, y: 0, z: 3, block: 'furnace' }, { x: 2, y: 0, z: 1, block: 'torch', optional: true })
+  return replaceInterior(p)
+}
+
+// ostatni wpis dla danej komorki wygrywa (meble zastepuja "powietrze" wnetrza)
+function replaceInterior(p) {
+  const byPos = new Map()
+  for (const c of p) byPos.set(`${c.x},${c.y},${c.z}`, c)
+  return [...byPos.values()]
+}
+
+// dom jak u villagerow (rowniny): 5x5, rogi z pni, sciany z desek, okna, dach z wierzcholkiem
+function planVillagerHouse() {
+  const p = []
+  fill(-1, 1, 1, 3, (x, z) => { for (let y = 0; y < 3; y++) p.push({ x, y, z, block: 'air' }) })
+  ring(-2, 2, 0, 4, (x, z) => p.push({ x, y: -1, z, block: 'cobblestone' })) // fundament
+  for (let y = 0; y < 3; y++) {
+    ring(-2, 2, 0, 4, (x, z) => {
+      if (x === 0 && z === 0 && y <= 1) return
+      const corner = Math.abs(x) === 2 && (z === 0 || z === 4)
+      const window = y === 1 && ((Math.abs(x) === 2 && z === 2) || (x === 0 && z === 4))
+      p.push({ x, y, z, block: corner ? 'oak_log' : window ? 'glass_pane' : 'oak_planks', optional: window })
+    })
+  }
+  p.push({ x: 0, y: 0, z: 0, block: 'oak_door' }, { x: 0, y: 1, z: 0, block: 'air' })
+  fill(-2, 2, 0, 4, (x, z) => p.push({ x, y: 3, z, block: 'oak_planks' }))
+  fill(-1, 1, 1, 3, (x, z) => p.push({ x, y: 4, z, block: 'oak_planks' }))
+  p.push({ x: 0, y: 5, z: 2, block: 'oak_log' })
+  p.push({ x: 1, y: 0, z: 3, block: 'torch', optional: true })
+  return replaceInterior(p)
+}
+
+// zamek 13x13 z bruku: mury 5 wysokie z blankami, brama 3 szeroka, 4 wieze 3x3 do wysokosci 8
+function planCastle() {
+  const p = []
+  fill(-5, 5, 1, 11, (x, z) => { for (let y = 0; y < 4; y++) p.push({ x, y, z, block: 'air' }) })
+  for (let y = 0; y < 5; y++) ring(-6, 6, 0, 12, (x, z) => p.push({ x, y, z, block: 'cobblestone' }))
+  ring(-6, 6, 0, 12, (x, z) => { if ((x + z) % 2 === 0) p.push({ x, y: 5, z, block: 'cobblestone' }) })
+  for (const [cx, cz] of [[-6, 0], [6, 0], [-6, 12], [6, 12]]) {
+    const sx = cx < 0 ? 1 : -1
+    const sz = cz === 0 ? 1 : -1
+    for (let y = 0; y < 8; y++) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) p.push({ x: cx + sx * i, y, z: cz + sz * j, block: 'cobblestone' })
+    for (const [i, j] of [[0, 0], [2, 0], [0, 2], [2, 2]]) p.push({ x: cx + sx * i, y: 8, z: cz + sz * j, block: 'cobblestone' })
+  }
+  for (let x = -1; x <= 1; x++) for (let y = 0; y < 3; y++) p.push({ x, y, z: 0, block: 'air' }) // brama
+  p.push({ x: -4, y: 0, z: 10, block: 'crafting_table' }, { x: 4, y: 0, z: 10, block: 'chest' }, { x: 0, y: 0, z: 6, block: 'torch', optional: true })
+  return replaceInterior(p)
+}
+
+// zagroda na zwierzeta: plot 9x9 z furtka
+function planPen() {
+  const p = []
+  ring(-4, 4, 0, 8, (x, z) => p.push({ x, y: 0, z, block: x === 0 && z === 0 ? 'oak_fence_gate' : 'oak_fence' }))
+  fill(-3, 3, 1, 7, (x, z) => { p.push({ x, y: 0, z, block: 'air' }); p.push({ x, y: 1, z, block: 'air' }) })
+  return replaceInterior(p)
+}
+
+// platforma w niebie 9x9 z murkiem dookola, stolem i skrzynia (srodek to slup, na ktorym stoi bot)
+function planSkyPlatform() {
+  const p = []
+  fill(-4, 4, -4, 4, (x, z) => { if (x || z) p.push({ x, y: -1, z, block: 'cobblestone' }) })
+  ring(-4, 4, -4, 4, (x, z) => p.push({ x, y: 0, z, block: 'cobblestone' })) // murek, zeby nie spasc
+  p.push({ x: -3, y: 0, z: -3, block: 'crafting_table' }, { x: 3, y: 0, z: -3, block: 'chest' }, { x: 0, y: 0, z: 3, block: 'torch', optional: true })
+  return p
+}
+
+// baza podziemna: pokoj 7x7x3 z pochodniami, stolem, piecem i skrzynia
+function planUndergroundRoom() {
+  const p = []
+  fill(-3, 3, 0, 6, (x, z) => { for (let y = 0; y < 3; y++) p.push({ x, y, z, block: 'air' }) })
+  p.push({ x: -3, y: 0, z: 6, block: 'crafting_table' }, { x: 3, y: 0, z: 6, block: 'chest' }, { x: -3, y: 0, z: 3, block: 'furnace' })
+  for (const [x, z] of [[-2, 1], [2, 1], [-2, 5], [2, 5]]) p.push({ x, y: 0, z, block: 'torch', optional: true })
+  return replaceInterior(p)
+}
+
+// ---------- slup do nieba ----------
+async function pillarUp(targetY) {
+  const block = () => bot.inventory.items().find(i => SCAFFOLD.includes(i.name))
+  let stuck = 0
+  while (running && bot.entity.position.y < targetY && stuck < 5) {
+    const it = block()
+    if (!it) { say('Skonczyly mi sie bloki na slup.'); return false }
+    const feet = bot.entity.position.floored()
+    // nad glowa musi byc wolne
+    if (isSolid(feet.offset(0, 2, 0))) { try { await clearBlock(feet.offset(0, 2, 0)) } catch {} }
+    await bot.equip(it, 'hand')
+    await bot.look(bot.entity.yaw, -Math.PI / 2, true)
+    bot.setControlState('jump', true)
+    for (let t = 0; t < 20 && bot.entity.position.y < feet.y + 1; t++) await sleep(50)
+    try { await bot.placeBlock(bot.blockAt(feet.offset(0, -1, 0)), new Vec3(0, 1, 0)) } catch {}
+    bot.setControlState('jump', false)
+    await sleep(300)
+    stuck = bot.entity.position.floored().y > feet.y ? 0 : stuck + 1
+    setStatus(`buduje slup do nieba: y=${Math.floor(bot.entity.position.y)}/${targetY}`)
+  }
+  return bot.entity.position.y >= targetY
+}
+
+// ---------- farmy ----------
+const CROPS = [
+  [/^(zbo|psze|zyt)/, 'wheat_seeds', 'zboze'], [/^marchew/, 'carrot', 'marchew'], [/^ziemniak/, 'potato', 'ziemniaki'], [/^burak/, 'beetroot_seeds', 'buraki']
+]
+
+async function cropFarm(seed, label) {
+  const water = bot.findBlock({ matching: mcData.blocksByName.water.id, maxDistance: 16 })
+  if (!water) { say('Do farmy potrzebuje wody w promieniu 16 blokow - podejdz ze mna nad wode (albo zrob oczko wodne).'); return }
+  if (!bot.inventory.items().some(i => i.name.endsWith('_hoe'))) await obtain('wooden_hoe', 1)
+  if (!has(seed)) {
+    say(`Nie mam ${seed} - zdobywam.`)
+    if (seed === 'wheat_seeds') await collect(['short_grass', 'tall_grass', 'grass'].filter(n => mcData.blocksByName[n]), 16, /^wheat_seeds$/)
+    else await obtain(seed, 8)
+  }
+  if (!has(seed)) { say(`Nie mam czego posadzic (${seed}).`); return }
+  // ziemia w zasiegu nawodnienia (4 bloki od wody), na tej samej wysokosci, z powietrzem nad soba
+  const spots = bot.findBlocks({
+    matching: ['dirt', 'grass_block', 'farmland'].map(n => mcData.blocksByName[n].id),
+    maxDistance: 12,
+    count: 200
+  }).filter(p => Math.abs(p.x - water.position.x) <= 4 && Math.abs(p.z - water.position.z) <= 4 && p.y === water.position.y &&
+    bot.blockAt(p.offset(0, 1, 0))?.name === 'air')
+  let planted = 0
+  for (const p of spots) {
+    if (!running || !has(seed)) break
+    setStatus(`sadze ${label}: ${planted} posadzonych`)
+    try {
+      await goNearCell(p.offset(0, 1, 0))
+      if (bot.blockAt(p).name !== 'farmland') {
+        const hoe = bot.inventory.items().find(i => i.name.endsWith('_hoe'))
+        if (!hoe) break
+        await bot.equip(hoe, 'hand')
+        await bot.activateBlock(bot.blockAt(p))
+        await sleep(250)
+      }
+      if (bot.blockAt(p).name !== 'farmland') continue
+      await bot.equip(bot.inventory.items().find(i => i.name === seed), 'hand')
+      await bot.placeBlock(bot.blockAt(p), new Vec3(0, 1, 0)).catch(() => {})
+      await sleep(200)
+      if (bot.blockAt(p.offset(0, 1, 0))?.name !== 'air') planted++
+    } catch (e) { console.log('[bot] farma:', e.message) }
+  }
+  say(planted ? `Farma (${label}) gotowa: posadzilem ${planted}.` : 'Nie udalo mi sie nic posadzic (brak ziemi przy wodzie?).')
+}
+
+async function treeFarm() {
+  if (!bot.inventory.items().some(i => i.name.endsWith('_sapling'))) {
+    say('Nie mam sadzonek - zbieram je z lisci.')
+    const leaves = mcData.blocksArray.map(b => b.name).filter(n => n.endsWith('_leaves'))
+    await collect(leaves, 6, /_sapling$/)
+  }
+  const front = facingAxis()
+  const origin = bot.entity.position.floored().offset(front.x * 3, 0, front.z * 3)
+  let planted = 0
+  for (const [x, z] of [[-4, 0], [0, 0], [4, 0], [-4, 4], [0, 4], [4, 4], [-4, 8], [0, 8], [4, 8]]) {
+    const sap = bot.inventory.items().find(i => i.name.endsWith('_sapling'))
+    if (!running || !sap) break
+    const top = toWorld(origin, front, x, 0, z)
+    // ziemia pod sadzonka: szukamy powierzchni w kolumnie
+    let ground = null
+    for (let dy = 3; dy >= -3; dy--) {
+      const b = bot.blockAt(top.offset(0, dy, 0))
+      if (b && ['dirt', 'grass_block', 'podzol', 'coarse_dirt'].includes(b.name) && bot.blockAt(top.offset(0, dy + 1, 0))?.name === 'air') { ground = b; break }
+    }
+    if (!ground) continue
+    setStatus(`sadze drzewa: ${planted} posadzonych`)
+    try {
+      await goNearCell(ground.position.offset(0, 1, 0))
+      await bot.equip(sap, 'hand')
+      await bot.placeBlock(ground, new Vec3(0, 1, 0)).catch(() => {})
+      await sleep(200)
+      if (bot.blockAt(ground.position.offset(0, 1, 0))?.name.endsWith('_sapling')) planted++
+    } catch (e) { console.log('[bot] drzewa:', e.message) }
+  }
+  say(planted ? `Farma drzew gotowa: posadzilem ${planted} sadzonek.` : 'Nie udalo mi sie posadzic drzew (brak sadzonek albo ziemi).')
+}
+
+async function caneFarm() {
+  if (!has('sugar_cane')) await obtain('sugar_cane', 4)
+  if (!has('sugar_cane')) { say('Nie mam trzciny do posadzenia.'); return }
+  const spots = bot.findBlocks({ matching: ['dirt', 'grass_block', 'sand', 'red_sand'].map(n => mcData.blocksByName[n].id), maxDistance: 16, count: 300 })
+    .filter(p => bot.blockAt(p.offset(0, 1, 0))?.name === 'air' &&
+      [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => bot.blockAt(p.offset(dx, 0, dz))?.name === 'water'))
+  let planted = 0
+  for (const p of spots) {
+    const cane = bot.inventory.items().find(i => i.name === 'sugar_cane')
+    if (!running || !cane) break
+    try {
+      await goNearCell(p.offset(0, 1, 0))
+      await bot.equip(cane, 'hand')
+      await bot.placeBlock(bot.blockAt(p), new Vec3(0, 1, 0)).catch(() => {})
+      await sleep(200)
+      if (bot.blockAt(p.offset(0, 1, 0))?.name === 'sugar_cane') planted++
+    } catch {}
+  }
+  say(planted ? `Posadzilem ${planted} trzciny.` : 'Nie znalazlem miejsca przy wodzie na trzcine.')
+}
+
+// ---------- komenda "buduj" ----------
+function buildCommand(text) {
+  const t = stripPl(text).trim()
+  const front = facingAxis()
+  const ahead = n => bot.entity.position.floored().offset(front.x * n, 0, front.z * n)
+
+  if (/^(dom vil|dom wies|chat|chalupa)/.test(t)) return task('budowa domu villagera', () => buildPlan('dom villagera', planVillagerHouse(), ahead(3), front))
+  if (/^(baza pod|podziem|bunkier)/.test(t)) {
+    return task('budowa bazy podziemnej', async () => {
+      say('Kopie zejscie do bazy podziemnej.')
+      for (let i = 0; i < 8 && running; i++) await stepTo(front, -1)
+      await buildPlan('baza podziemna', planUndergroundRoom(), bot.entity.position.floored().offset(front.x, 0, front.z), front)
+    })
+  }
+  if (/^(sky|baza w niebie|niebo|podniebn)/.test(t)) {
+    return task('budowa skybase', async () => {
+      const targetY = Math.min(300, Math.max(Math.floor(bot.entity.position.y) + 30, 150))
+      // wszystko zbieramy na dole - w niebie nie ma skad (slup + platforma + murek + meble)
+      const plan = planSkyPlatform()
+      const pillar = Array.from({ length: targetY - Math.floor(bot.entity.position.y) + 5 }, () => ({ block: 'cobblestone' }))
+      if (!await gatherMaterials([...plan.filter(c => !c.optional), ...pillar], 'skybase')) return
+      say(`Buduje slup do y=${targetY}.`)
+      if (!await pillarUp(targetY)) return
+      await buildPlan('skybase', plan, bot.entity.position.floored(), front, { passes: 8 })
+    })
+  }
+  if (/^zam/.test(t)) return task('budowa zamku', () => buildPlan('zamek', planCastle(), ahead(3), front))
+  if (/^farm/.test(t)) {
+    const what = t.replace(/^farm\w*\s*/, '')
+    const crop = CROPS.find(([re]) => re.test(what))
+    if (crop) return task(`farma: ${crop[2]}`, () => cropFarm(crop[1], crop[2]))
+    if (/^(drzew|drew|las)/.test(what)) return task('farma drzew', treeFarm)
+    if (/^(trzcin|cukr)/.test(what)) return task('farma trzciny', caneFarm)
+    if (/^(zwierz|krow|owc|swin|kur|zagrod)/.test(what)) {
+      return task('zagroda', async () => {
+        await buildPlan('zagroda', planPen(), ahead(2), front)
+        if (running) say('Zagroda gotowa. Zwierzeta trzeba do niej zwabic (np. pszenica dla krow i owiec, marchew dla swin).')
+      })
+    }
+    say('Farma czego? farma zboza / marchwi / ziemniakow / burakow / drzew / trzciny / zwierzat')
+    return
+  }
+  if (/^(dom|baz|chat)/.test(t)) return task('budowa domu', () => buildPlan('dom', planHouse(), ahead(3), front))
+  say('Co zbudowac? dom, baza, zamek, dom villagera, baza podziemna, skybase, farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>')
+}
+
 // ---------- pliki z danymi (punkty, uprawnienia) ----------
 const fs = require('fs')
 const pathLib = require('path')
@@ -2405,6 +2809,7 @@ function handle(user, msg, whisper = false) {
   if (/^(scraftuj|zrob|stworz|wykonaj)$/.test(verb)) return craftCommand(args.join(' '))
   if (/^(poluj|upoluj)$/.test(verb)) return huntCommand(args)
   if (c === 'spij' || c === 'idz spac') return sleepCommand()
+  if (/^(buduj|zbuduj|postaw budynek)$/.test(verb)) return buildCommand(args.join(' '))
   if (c === 'przeszukaj' || c === 'przeszukaj skrzynie') return lootCommand()
   if (/^szukaj( skrzyn\w*)?$/.test(c)) return searchChestsCommand()
   if (/^skrzynie (wl|on|tak)/.test(c)) { lootEnabled = true; return say('Bede zagladal do znalezionych skrzyn.') }
