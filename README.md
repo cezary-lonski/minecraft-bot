@@ -84,6 +84,10 @@ Bot buduje przed soba (w kierunku, w ktorym patrzy), sam zbiera materialy i wyro
 | `buduj dom` (`baza`) | dom 7x7: sciany z desek, rogi z pni, drzwi, okna, dach, stol, skrzynia, piec, pochodnia | 124 deski, 16 pni |
 | `buduj dom villagera` | domek 5x5 jak w wiosce, fundament z bruku, dach ze szczytem | 65 desek, 13 pni, 16 bruku |
 | `buduj zamek` | mury 13x13 z blankami, brama, 4 wieze | ok. 450 bruku (dlugo!) |
+| `buduj zamczysko` | mury 21x21 (7 wysokie) z blankami, brama, 4 wieze 5x5 (12 wysokie), donzon 7x7 (14 wysoki) | ok. 1630 bruku (bardzo dlugo!) |
+| `buduj palac` | fundament 19x15, sala 15x11 z kolumnami z pni i dwoma rzedami okien, taras z blankami, 4 okragle wieze i wieza srodkowa, wszystkie z iglicami (najwyzszy punkt 21 blokow) | ok. 1000 bruku, 370 desek, 64 pnie, 10 plotow (+144 szyby jako ozdoba) |
+| `buduj napis: <tekst>` | napis stojacy przed botem, litery 3x5 (do 30 znakow: litery, cyfry, ! ? . , - : + < >) | 5-15 bruku na litere |
+| `buduj napis z <blok>: <tekst>` | to samo z innego bloku, np. `buduj napis z desek: elo` | |
 | `buduj baza podziemna` | schody 8 w dol i pokoj 7x7x3 ze stolem, piecem, skrzynia i pochodniami | - |
 | `buduj skybase` | slup do y=150 (min. 30 w gore) i platforma 9x9 z murkiem, stolem i skrzynia | ok. 200 bruku |
 | `buduj farma zboza/marchwi/ziemniakow/burakow` | zaorane pole przy wodzie i posadzone nasiona; bez wody w poblizu robi oczko wodne (wiadro z 3 zelaza, woda ze zrodla do 64 blokow) | motyka, nasiona, wiadro |
@@ -93,6 +97,10 @@ Bot buduje przed soba (w kierunku, w ktorym patrzy), sam zbiera materialy i wyro
 
 Wszystkie materialy bot zdobywa sam (scina drzewa, kopie bruk, craftuje drzwi, skrzynie, ploty). Ozdoby tez probuje zdobyc:
 szyby (piasek -> szklo w piecu -> szyby) i pochodnie (wegiel + patyki); jak sie nie uda, zostawia w tym miejscu puste pole.
+
+Duze budowle (ponad 600 blokow - zamczysko, palac) nie mieszcza sie w ekwipunku, wiec bot zbiera materialy partiami:
+po kawalku na kolejne 3 warstwy, buduje je i idzie po nastepna partie. Materialow budowy nie wyrzuca przy sprzataniu ekwipunku.
+Wiszace czesci napisow (np. srodek litery Z, kropka w "!") dostaja tymczasowe podpory z ziemi, ktore na koncu znikaja.
 
 Gdy brakuje ozdob (szyby, pochodnie), bot pyta: "Potrzebuje jeszcze: 3 x glass_pane. Mam po nie pojsc czy budowac bez nich?" -
 odpowiedz `pojdz` albo `buduj bez` (bez odpowiedzi przez 90 s buduje bez nich).

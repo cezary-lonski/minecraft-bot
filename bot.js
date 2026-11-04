@@ -169,9 +169,11 @@ async function makeRoom() {
   if (bot.inventory.emptySlotCount() > 2) return
   let tossed = 0
   const toss = async it => { try { await bot.toss(it.type, null, it.count); tossed += it.count } catch {} }
-  for (const it of bot.inventory.items().filter(i => JUNK_RE.test(i.name))) await toss(it)
+  // materialow aktualnej budowy (np. bruk na zamek, ziemia na rusztowanie) nie wyrzucamy
+  const keep = i => protectedItems.has(i.name) || (protectedItems.has('log') && WOOD_RE.test(i.name))
+  for (const it of bot.inventory.items().filter(i => JUNK_RE.test(i.name) && !keep(i))) await toss(it)
   // bruku zostawiamy jeden stack (na piec i schody), reszta to balast
-  for (const it of bot.inventory.items().filter(i => i.name === 'cobblestone').slice(1)) await toss(it)
+  if (!protectedItems.has('cobblestone')) for (const it of bot.inventory.items().filter(i => i.name === 'cobblestone').slice(1)) await toss(it)
   if (tossed) console.log(`[bot] pelny ekwipunek - wyrzucilem ${tossed} smieci`)
   else if (bot.inventory.emptySlotCount() === 0) say('Mam pelny ekwipunek i nie ma czego wyrzucic - schowaj mi cos albo wez rzeczy ("daj wszystko").')
 }
@@ -1109,7 +1111,7 @@ function run() {
 const HELP = [
   'Zadania: start, etap <drewno|kamien|jedzenie|zelazo|diamenty>, zdobadz <surowiec|przedmiot|jedzenie> [ile], poluj [zwierze] [ile], przepal, scraftuj <co>, stop',
   'Ruch: tu, idz <ile> <przod|tyl|lewo|prawo>, idz do <x z | punkt | gracz>, chodz za mna, ochraniaj [gracz], zabij <gracz>, spij',
-  'Budowa: buduj dom | zamek | dom villagera | baza podziemna | skybase | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
+  'Budowa: buduj dom | zamek | zamczysko | palac | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
   'Inne: status, co robisz, diag, chat <tekst>, permisja <nick>, odbierz <nick>, permisje'
@@ -1880,49 +1882,59 @@ async function gatherMaterials(cells, label) {
   return running
 }
 
+// materialy aktualnej budowy - automatyczne sprzatanie ekwipunku (makeRoom) ich nie wyrzuca
+const protectedItems = new Set()
+
+// duze budowle (zamczysko, palac) nie mieszcza sie w ekwipunku na raz - materialy zbieramy partiami, warstwa po warstwie
+const BATCH_LIMIT = 600
+
 async function buildPlan(label, plan, origin, front, opts = {}) {
   const cells = plan.map(c => ({ ...c, pos: toWorld(origin, front, c.x, c.y, c.z) }))
-  // najpierw to, bez czego sie nie da (sciany, dach, meble)
-  if (!await gatherMaterials(cells.filter(c => !c.optional), label)) return false
-  // ozdoby (szyby, pochodnie) tez probujemy zdobyc: szyby z piasku przepalonego na szklo, pochodnie z wegla i patykow.
-  // Jak sie nie uda - w tym miejscu zostaje puste miejsce zamiast zatrzymywac cala budowe.
-  const extras = {}
-  for (const c of cells) if (c.optional) extras[c.block] = (extras[c.block] || 0) + 1
-  const lacking = Object.entries(extras).filter(([name, n]) => haveOf(name) < n)
-  if (lacking.length) {
-    setStatus(`czekam na odpowiedz: zdobyc ozdoby na ${label} czy budowac bez nich`)
-    const list = lacking.map(([name, n]) => `${n - haveOf(name)} x ${name}`).join(', ')
-    const choice = await askUser(`Potrzebuje jeszcze: ${list}. Mam po nie pojsc czy budowac bez nich? (pojdz / buduj bez)`,
-      // cale wiadomosci, zeby np. "idz do bazy" nie zostalo wziete za odpowiedz "idz"
-      [[/^(pojdz|idz|lec|tak|zdobadz|dawaj)( po nie)?$/, 'go'], [/^(buduj bez( nich)?|bez( nich)?|nie|buduj)$/, 'skip']],
-      90000, 'skip', 'Nie dostalem odpowiedzi - buduje bez nich.')
-    if (!running) return false
-    if (choice === 'go') {
-      say('Dobra, ide po nie.')
-      for (const [name, n] of lacking) {
-        if (!running) return false
-        setStatus(`zbieram ozdoby na ${label}: ${name} (mam ${haveOf(name)}/${n})`)
-        try { await obtain(name, n) } catch (e) { console.log('[bot] ozdoby:', e.message) }
-      }
-    } else {
-      say('Dobra, buduje bez nich.')
-    }
-  }
-  for (const c of cells) if (c.optional && haveOf(c.block) < cells.filter(o => o.block === c.block).length) c.block = 'air'
-
-  // budujemy bez kopania przez wlasne sciany
-  const buildMoves = new Movements(bot)
-  buildMoves.canDig = false
-  buildMoves.allow1by1towers = true
+  for (const c of cells) if (c.temp) c.block = 'dirt' // tymczasowe podpory (np. pod kropka nad "i"), na koncu znikaja
+  const solidCells = cells.filter(c => c.block !== 'air')
+  const batched = solidCells.length > BATCH_LIMIT
+  for (const c of solidCells) protectedItems.add(WOOD_RE.test(c.block) ? 'log' : c.block)
   const normalMoves = bot.pathfinder.movements
-  bot.pathfinder.setMovements(buildMoves)
-  const total = cells.filter(c => c.block !== 'air').length
-  let placed = 0
-  let failed = 0
   try {
+    // najpierw to, bez czego sie nie da (sciany, dach, meble); duze budowle - partiami w trakcie
+    if (batched) say(`${label} to ${solidCells.length} blokow - materialy bede zbieral partiami, warstwa po warstwie.`)
+    else if (!await gatherMaterials(solidCells.filter(c => !c.optional), label)) return false
+
+    // ozdoby (szyby, pochodnie): pytamy, czy po nie isc
+    const extras = {}
+    for (const c of cells) if (c.optional) extras[c.block] = (extras[c.block] || 0) + 1
+    const lacking = Object.entries(extras).filter(([name, n]) => haveOf(name) < n)
+    let wantExtras = false
+    if (lacking.length) {
+      setStatus(`czekam na odpowiedz: zdobyc ozdoby na ${label} czy budowac bez nich`)
+      const list = lacking.map(([name, n]) => `${n - haveOf(name)} x ${name}`).join(', ')
+      const choice = await askUser(`Potrzebuje jeszcze: ${list}. Mam po nie pojsc czy budowac bez nich? (pojdz / buduj bez)`,
+        // cale wiadomosci, zeby np. "idz do bazy" nie zostalo wziete za odpowiedz "idz"
+        [[/^(pojdz|idz|lec|tak|zdobadz|dawaj)( po nie)?$/, 'go'], [/^(buduj bez( nich)?|bez( nich)?|nie|buduj)$/, 'skip']],
+        90000, 'skip', 'Nie dostalem odpowiedzi - buduje bez nich.')
+      if (!running) return false
+      wantExtras = choice === 'go'
+      say(wantExtras ? 'Dobra, ide po nie.' : 'Dobra, buduje bez nich.')
+      if (wantExtras && !batched) {
+        for (const [name, n] of lacking) {
+          if (!running) return false
+          setStatus(`zbieram ozdoby na ${label}: ${name} (mam ${haveOf(name)}/${n})`)
+          try { await obtain(name, n) } catch (e) { console.log('[bot] ozdoby:', e.message) }
+        }
+      }
+    }
+    if (!wantExtras) for (const c of cells) if (c.optional && haveOf(c.block) < cells.filter(o => o.block === c.block).length) c.block = 'air'
+
+    // budujemy bez kopania przez wlasne sciany (kopiemy tylko przy przygotowaniu terenu i zbieraniu)
+    const buildMoves = new Movements(bot)
+    buildMoves.canDig = false
+    buildMoves.allow1by1towers = true
+    const total = cells.filter(c => c.block !== 'air').length
+    let placed = 0
+    let failed = 0
+
     // 1) teren: od gory wykopujemy to, co przeszkadza (ziemia, trawa, kamien w obrysie)
     say(`Buduje ${label} (${total} blokow). Najpierw przygotowuje teren.`)
-    bot.pathfinder.setMovements(normalMoves)
     for (const c of [...cells].sort((a, b) => b.y - a.y)) {
       if (!running) return false
       const b = bot.blockAt(c.pos)
@@ -1930,12 +1942,19 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
       setStatus(`przygotowuje teren pod ${label}`)
       try { await goNearCell(c.pos); await clearBlock(c.pos) } catch (e) { console.log('[bot] teren:', e.message) }
     }
-    bot.pathfinder.setMovements(buildMoves)
 
     // 2) stawianie warstwami od dolu; w warstwie kilka przejsc - blok musi miec sie o co oprzec
     const layers = [...new Set(cells.map(c => c.y))].sort((a, b) => a - b)
     for (const y of layers) {
       let pending = cells.filter(c => c.y === y && c.block !== 'air')
+      if (batched && pending.length) {
+        // material na te warstwe (i ewentualnie nastepne, zeby nie chodzic po kazdy blok osobno)
+        const batch = cells.filter(c => c.y >= y && c.y < y + 3 && c.block !== 'air' && (!c.optional || wantExtras))
+        bot.pathfinder.setMovements(normalMoves)
+        if (!await gatherMaterials(batch.filter(c => !c.optional), `${label} (warstwy ${y - layers[0] + 1}-${y - layers[0] + 3})`)) return false
+        if (wantExtras) for (const c of batch.filter(o => o.optional)) if (haveOf(c.block) < 1) { try { await obtain(c.block, 1) } catch {} }
+      }
+      bot.pathfinder.setMovements(buildMoves)
       for (let pass = 0; pass < (opts.passes || 4) && pending.length && running; pass++) {
         const next = []
         for (const c of pending) {
@@ -1945,7 +1964,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
           if (y === layers[0]) await fillBelow(c.pos)
           if (!hasSupport(c.pos)) { next.push(c); continue }
           const it = invItemFor(c.block)
-          if (!it) { failed++; continue }
+          if (!it) { if (!c.optional) failed++; continue }
           setStatus(`buduje ${label}: ${placed}/${total} blokow (warstwa ${y - layers[0] + 1}/${layers.length})`)
           try {
             await goNearCell(c.pos)
@@ -1960,11 +1979,23 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
       }
       failed += pending.length
     }
+
+    // 3) tymczasowe podpory znikaja (od gory)
+    const temps = cells.filter(c => c.temp).sort((a, b) => b.y - a.y)
+    if (temps.length && running) {
+      bot.pathfinder.setMovements(normalMoves)
+      setStatus(`usuwam rusztowanie z ${label}`)
+      for (const c of temps) {
+        if (!running) break
+        try { await goNearCell(c.pos); await clearBlock(c.pos) } catch {}
+      }
+    }
+    if (running) say(failed ? `${label} gotowe, ale ${failed} blokow nie udalo sie postawic.` : `${label} gotowe!`)
+    return true
   } finally {
     bot.pathfinder.setMovements(normalMoves)
+    protectedItems.clear()
   }
-  if (running) say(failed ? `${label} gotowe, ale ${failed} blokow nie udalo sie postawic.` : `${label} gotowe!`)
-  return true
 }
 
 // ---------- plany ----------
@@ -2063,6 +2094,122 @@ function planUndergroundRoom() {
   fill(-3, 3, 0, 6, (x, z) => { for (let y = 0; y < 3; y++) p.push({ x, y, z, block: 'air' }) })
   p.push({ x: -3, y: 0, z: 6, block: 'crafting_table' }, { x: 3, y: 0, z: 6, block: 'chest' }, { x: -3, y: 0, z: 3, block: 'furnace' })
   for (const [x, z] of [[-2, 1], [2, 1], [-2, 5], [2, 5]]) p.push({ x, y: 0, z, block: 'torch', optional: true })
+  return replaceInterior(p)
+}
+
+// zamczysko 21x21: wysokie mury z blankami, brama, 4 wieze 5x5 i donzon (wieza mieszkalna) z tylu dziedzinca
+function planBigCastle() {
+  const p = []
+  fill(-9, 9, 1, 19, (x, z) => { for (let y = 0; y < 6; y++) p.push({ x, y, z, block: 'air' }) }) // dziedziniec
+  for (let y = 0; y < 7; y++) ring(-10, 10, 0, 20, (x, z) => p.push({ x, y, z, block: 'cobblestone' }))
+  ring(-10, 10, 0, 20, (x, z) => { if ((x + z) % 2 === 0) p.push({ x, y: 7, z, block: 'cobblestone' }) })
+  for (const [cx, cz] of [[-10, 0], [10, 0], [-10, 20], [10, 20]]) {
+    fill(cx - 1, cx + 1, cz - 1, cz + 1, (x, z) => { for (let y = 0; y < 11; y++) p.push({ x, y, z, block: 'air' }) })
+    for (let y = 0; y < 12; y++) ring(cx - 2, cx + 2, cz - 2, cz + 2, (x, z) => p.push({ x, y, z, block: 'cobblestone' }))
+    ring(cx - 2, cx + 2, cz - 2, cz + 2, (x, z) => { if ((x + z) % 2 === 0) p.push({ x, y: 12, z, block: 'cobblestone' }) })
+  }
+  for (let x = -1; x <= 1; x++) for (let y = 0; y < 4; y++) p.push({ x, y, z: 0, block: 'air' }) // brama
+  // donzon 7x7: 14 wysoki, dach i blanki, wejscie od dziedzinca
+  fill(-2, 2, 12, 16, (x, z) => { for (let y = 0; y < 14; y++) p.push({ x, y, z, block: 'air' }) })
+  for (let y = 0; y < 14; y++) ring(-3, 3, 11, 17, (x, z) => p.push({ x, y, z, block: 'cobblestone' }))
+  fill(-3, 3, 11, 17, (x, z) => p.push({ x, y: 14, z, block: 'cobblestone' }))
+  ring(-3, 3, 11, 17, (x, z) => { if ((x + z) % 2 === 0) p.push({ x, y: 15, z, block: 'cobblestone' }) })
+  p.push({ x: 0, y: 0, z: 11, block: 'air' }, { x: 0, y: 1, z: 11, block: 'air' })
+  p.push({ x: -2, y: 0, z: 16, block: 'crafting_table' }, { x: 2, y: 0, z: 16, block: 'chest' }, { x: -2, y: 0, z: 13, block: 'furnace' })
+  for (const [x, z] of [[-8, 2], [8, 2], [-8, 18], [8, 18], [0, 14]]) p.push({ x, y: 0, z, block: 'torch', optional: true })
+  return replaceInterior(p)
+}
+
+// wieza palacowa: "okragla" (5x5 bez rogow), od y0 do y1, z czapa i iglica (deski, pnie, na szczycie ploty)
+function palaceTower(p, cx, cz, y0, y1) {
+  const roundRing = (x, z) => !(Math.abs(x - cx) === 2 && Math.abs(z - cz) === 2)
+  fill(cx - 1, cx + 1, cz - 1, cz + 1, (x, z) => { for (let y = y0; y < y1; y++) p.push({ x, y, z, block: 'air' }) })
+  for (let y = y0; y < y1; y++) {
+    ring(cx - 2, cx + 2, cz - 2, cz + 2, (x, z) => {
+      if (!roundRing(x, z)) return
+      const window = (y - y0) % 4 === 2 && (x === cx || z === cz)
+      p.push({ x, y, z, block: window ? 'glass_pane' : 'cobblestone', optional: window })
+    })
+  }
+  fill(cx - 2, cx + 2, cz - 2, cz + 2, (x, z) => { if (roundRing(x, z)) p.push({ x, y: y1, z, block: 'oak_planks' }) }) // czapa
+  fill(cx - 1, cx + 1, cz - 1, cz + 1, (x, z) => p.push({ x, y: y1 + 1, z, block: 'oak_planks' }))
+  p.push({ x: cx, y: y1 + 2, z: cz, block: 'oak_log' }, { x: cx, y: y1 + 3, z: cz, block: 'oak_log' })
+  p.push({ x: cx, y: y1 + 4, z: cz, block: 'oak_fence' }, { x: cx, y: y1 + 5, z: cz, block: 'oak_fence' }) // iglica
+}
+
+// palac: fundament, sala 15x11 z kolumnami z pni i dwoma rzedami okien, taras z blankami,
+// 4 okragle wieze narozne i wysoka wieza srodkowa - wszystkie z iglicami
+function planPalace() {
+  const p = []
+  fill(-9, 9, 0, 14, (x, z) => p.push({ x, y: -1, z, block: 'cobblestone' })) // fundament / dziedziniec
+  fill(-6, 6, 3, 11, (x, z) => { for (let y = 0; y < 8; y++) p.push({ x, y, z, block: 'air' }) })
+  for (let y = 0; y < 8; y++) {
+    ring(-7, 7, 2, 12, (x, z) => {
+      const pillar = ((x + 7) % 4 === 0 && (z === 2 || z === 12)) || ((z - 2) % 4 === 0 && Math.abs(x) === 7) ||
+        (Math.abs(x) === 7 && (z === 2 || z === 12))
+      const window = !pillar && [2, 3, 5, 6].includes(y)
+      p.push({ x, y, z, block: pillar ? 'oak_log' : window ? 'glass_pane' : 'oak_planks', optional: window })
+    })
+  }
+  p.push({ x: 0, y: 0, z: 2, block: 'oak_door' }, { x: 0, y: 1, z: 2, block: 'air' }) // wejscie
+  for (const x of [-1, 1]) for (let y = 0; y < 3; y++) p.push({ x, y, z: 1, block: 'oak_log' }) // kolumny portyku
+  fill(-1, 1, 1, 1, (x, z) => p.push({ x, y: 3, z, block: 'oak_planks' }))
+  fill(-7, 7, 2, 12, (x, z) => p.push({ x, y: 8, z, block: 'oak_planks' })) // dach-taras
+  ring(-7, 7, 2, 12, (x, z) => { if ((x + z) % 2 === 0) p.push({ x, y: 9, z, block: 'cobblestone' }) })
+  for (const [cx, cz] of [[-7, 2], [7, 2], [-7, 12], [7, 12]]) palaceTower(p, cx, cz, 0, 14)
+  palaceTower(p, 0, 7, 9, 16) // wieza srodkowa na dachu
+  p.push({ x: -5, y: 0, z: 10, block: 'crafting_table' }, { x: 5, y: 0, z: 10, block: 'chest' })
+  for (const [x, z] of [[-5, 4], [5, 4], [-5, 9], [5, 9]]) p.push({ x, y: 0, z, block: 'torch', optional: true })
+  return replaceInterior(p)
+}
+
+// ---------- napisy ----------
+// czcionka 3x5 (# = blok), czytana od lewej z miejsca, gdzie stoi bot
+const FONT = {
+  a: ['###', '#.#', '###', '#.#', '#.#'], b: ['##.', '#.#', '##.', '#.#', '##.'], c: ['###', '#..', '#..', '#..', '###'],
+  d: ['##.', '#.#', '#.#', '#.#', '##.'], e: ['###', '#..', '###', '#..', '###'], f: ['###', '#..', '###', '#..', '#..'],
+  g: ['###', '#..', '#.#', '#.#', '###'], h: ['#.#', '#.#', '###', '#.#', '#.#'], i: ['###', '.#.', '.#.', '.#.', '###'],
+  j: ['..#', '..#', '..#', '#.#', '###'], k: ['#.#', '##.', '#..', '##.', '#.#'], l: ['#..', '#..', '#..', '#..', '###'],
+  m: ['#.#', '###', '###', '#.#', '#.#'], n: ['##.', '#.#', '#.#', '#.#', '#.#'], o: ['###', '#.#', '#.#', '#.#', '###'],
+  p: ['###', '#.#', '###', '#..', '#..'], q: ['###', '#.#', '#.#', '###', '..#'], r: ['##.', '#.#', '##.', '#.#', '#.#'],
+  s: ['###', '#..', '###', '..#', '###'], t: ['###', '.#.', '.#.', '.#.', '.#.'], u: ['#.#', '#.#', '#.#', '#.#', '###'],
+  v: ['#.#', '#.#', '#.#', '#.#', '.#.'], w: ['#.#', '#.#', '###', '###', '#.#'], x: ['#.#', '#.#', '.#.', '#.#', '#.#'],
+  y: ['#.#', '#.#', '###', '.#.', '.#.'], z: ['###', '..#', '.#.', '#..', '###'],
+  0: ['###', '#.#', '#.#', '#.#', '###'], 1: ['.#.', '##.', '.#.', '.#.', '###'], 2: ['###', '..#', '###', '#..', '###'],
+  3: ['###', '..#', '###', '..#', '###'], 4: ['#.#', '#.#', '###', '..#', '..#'], 5: ['###', '#..', '###', '..#', '###'],
+  6: ['###', '#..', '###', '#.#', '###'], 7: ['###', '..#', '..#', '..#', '..#'], 8: ['###', '#.#', '###', '#.#', '###'],
+  9: ['###', '#.#', '###', '..#', '###'], ' ': ['...', '...', '...', '...', '...'], '!': ['.#.', '.#.', '.#.', '...', '.#.'],
+  '?': ['###', '..#', '.##', '...', '.#.'], '.': ['...', '...', '...', '...', '.#.'], ',': ['...', '...', '...', '.#.', '#..'],
+  '-': ['...', '...', '###', '...', '...'], ':': ['...', '.#.', '...', '.#.', '...'], '+': ['...', '.#.', '###', '.#.', '...'],
+  '<': ['..#', '.#.', '#..', '.#.', '..#'], '>': ['#..', '.#.', '..#', '.#.', '#..']
+}
+
+// napis stojacy pionowo przed botem; wiszace piksele (kropka, czesci X) dostaja tymczasowe podpory z ziemi
+function planText(text, block) {
+  const chars = [...stripPl(text)].map(ch => FONT[ch] ? ch : ' ')
+  const width = chars.length * 4 - 1
+  const left = -Math.floor(width / 2)
+  const pixels = new Set()
+  chars.forEach((ch, i) => FONT[ch].forEach((row, r) => [...row].forEach((px, col) => {
+    if (px === '#') pixels.add(`${left + i * 4 + col},${4 - r}`)
+  })))
+  // podparte = stoja na ziemi albo dotykaja (gora/dol/bok) podpartego piksela
+  const supported = new Set([...pixels].filter(k => k.endsWith(',0')))
+  for (let changed = true; changed;) {
+    changed = false
+    for (const k of pixels) {
+      if (supported.has(k)) continue
+      const [x, y] = k.split(',').map(Number)
+      if ([[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]].some(([a, b]) => supported.has(`${a},${b}`))) { supported.add(k); changed = true }
+    }
+  }
+  const p = []
+  for (const k of pixels) { const [x, y] = k.split(',').map(Number); p.push({ x, y, z: 0, block }) }
+  for (const k of pixels) {
+    if (supported.has(k)) continue
+    const [x, y] = k.split(',').map(Number)
+    for (let yy = y - 1; yy >= 0 && !pixels.has(`${x},${yy}`); yy--) p.push({ x, y: yy, z: 0, block: 'dirt', temp: true })
+  }
   return replaceInterior(p)
 }
 
@@ -2248,6 +2395,22 @@ function buildCommand(text) {
       await buildPlan('skybase', plan, bot.entity.position.floored(), front, { passes: 8 })
     })
   }
+  // napis: "napis: czesc", "napis z desek: czesc"
+  const sign = t.match(/^napis(?:\s+z\s+([^:]+?))?\s*:?\s*(.*)$/)
+  if (sign) {
+    const text = sign[2].trim().slice(0, 30)
+    if (!text) { say('Jaki napis? np. "buduj napis: czesc" albo "buduj napis z desek: elo"'); return }
+    let block = 'cobblestone'
+    if (sign[1]) {
+      const re = resolveGive(sign[1])
+      const found = mcData.itemsArray.find(i => re.test(i.name) && mcData.blocksByName[i.name] && obtainable(i.name))
+      if (!found) { say(`Nie umiem budowac z "${sign[1]}".`); return }
+      block = found.name
+    }
+    return task(`napis "${text}"`, () => buildPlan(`napis "${text}"`, planText(text, block), ahead(3), front))
+  }
+  if (/^zamczysk/.test(t)) return task('budowa zamczyska', () => buildPlan('zamczysko', planBigCastle(), ahead(3), front))
+  if (/^(palac|palacyk)/.test(t)) return task('budowa palacu', () => buildPlan('palac', planPalace(), ahead(3), front))
   if (/^zam/.test(t)) return task('budowa zamku', () => buildPlan('zamek', planCastle(), ahead(3), front))
   if (/^farm/.test(t)) {
     const what = t.replace(/^farm\w*\s*/, '')
@@ -2265,7 +2428,7 @@ function buildCommand(text) {
     return
   }
   if (/^(dom|baz|chat)/.test(t)) return task('budowa domu', () => buildPlan('dom', planHouse(), ahead(3), front))
-  say('Co zbudowac? dom, baza, zamek, dom villagera, baza podziemna, skybase, farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>')
+  say('Co zbudowac? dom, zamek, zamczysko, palac, dom villagera, baza podziemna, skybase, napis: <tekst>, farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>')
 }
 
 // ---------- pliki z danymi (punkty, uprawnienia) ----------
