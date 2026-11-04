@@ -801,6 +801,24 @@ setInterval(survivalTick, 400)
 const noDigPositions = new Set()
 
 // blok, ktorego ksztalt naprawde nachodzi na cialo bota (0.6 x 1.8) - wtedy bot jest w nim "wbity"
+// drabiny i pnacza: bot na nich wisi, wiec nie sa ani przeszkoda, ani rzecza do wykopania
+const CLIMBABLE = ['ladder', 'vine', 'scaffolding', 'twisting_vines', 'weeping_vines', 'cave_vines']
+const onClimbable = () => { const b = bot.blockAt(bot.entity.position.floored()); return !!b && CLIMBABLE.includes(b.name) }
+
+// Wspinanie: pathfinder na drabinie czesto nie wciska skoku, a od 1.14 wspina sie wlasnie skokiem (albo pchajac w sciane).
+// Gdy kolejny punkt drogi jest nad nami, a my wisimy na drabinie - trzymamy skok.
+let lastPath = []
+bot.on('path_update', r => { lastPath = r.path || [] })
+bot.on('goal_reached', () => { lastPath = [] })
+let climbJump = false
+bot.on('physicsTick', () => {
+  if (!bot.entity) return
+  const climbing = lastPath.length && bot.pathfinder.isMoving() && onClimbable()
+  const p = bot.entity.position
+  const up = climbing && lastPath.some(n => Math.abs(n.x - p.x) < 1.2 && Math.abs(n.z - p.z) < 1.2 && n.y > p.y + 0.6)
+  if (up) { bot.setControlState('jump', true); climbJump = true } else if (climbJump) { bot.setControlState('jump', false); climbJump = false }
+})
+
 function embeddedBlock() {
   const p = bot.entity.position
   const box = [p.x - 0.29, p.y + 0.05, p.z - 0.29, p.x + 0.29, p.y + 1.75, p.z + 0.29]
@@ -808,7 +826,7 @@ function embeddedBlock() {
     for (let y = Math.floor(box[1]); y <= Math.floor(box[4]); y++) {
       for (let z = Math.floor(box[2]); z <= Math.floor(box[5]); z++) {
         const b = bot.blockAt(new Vec3(x, y, z))
-        if (!b || !b.shapes?.length) continue
+        if (!b || !b.shapes?.length || CLIMBABLE.includes(b.name)) continue // na drabinie bot ma prawo "dotykac" bloku
         for (const s of b.shapes) {
           if (x + s[0] < box[3] && x + s[3] > box[0] && y + s[1] < box[4] && y + s[4] > box[1] && z + s[2] < box[5] && z + s[5] > box[2]) return b
         }
@@ -833,7 +851,7 @@ async function unstickTick() {
 
   unsticking = true
   try {
-    const canBreak = b => b && b.boundingBox === 'block' && bot.canDigBlock(b) && !noDigPositions.has(posKey(b.position)) &&
+    const canBreak = b => b && b.boundingBox === 'block' && bot.canDigBlock(b) && !noDigPositions.has(posKey(b.position)) && !CLIMBABLE.includes(b.name) &&
       !/_door$|_fence_gate$|chest|furnace|crafting_table|bed$/.test(b.name)
     if (inside) {
       console.log(`[bot] jestem wbity w ${inside.name} - wykopuje sie`)
@@ -851,6 +869,16 @@ async function unstickTick() {
       // tylko zaklinowany (nie wbity): nie kopiemy - to moglaby byc sciana budowli albo blanki.
       // Skok (np. na stopien), lekki ruch w bok i nowa droga zwykle wystarcza.
       console.log('[bot] utknalem w miejscu - probuje sie odblokowac')
+      if (onClimbable()) {
+        // na drabinie: cel wyzej - wspinaczka (skok), nizej - puszczamy wszystko i zjezdzamy
+        const p = bot.entity.position
+        const up = lastPath.some(n => n.y > p.y + 0.6)
+        bot.clearControlStates()
+        if (up) { bot.setControlState('jump', true); bot.setControlState('forward', true); await sleep(800) } else await sleep(800)
+        bot.clearControlStates()
+        if (bot.pathfinder.goal) bot.pathfinder.setMovements(bot.pathfinder.movements)
+        return
+      }
       bot.setControlState('jump', true)
       bot.setControlState(Math.random() < 0.5 ? 'left' : 'right', true)
       await sleep(400)
