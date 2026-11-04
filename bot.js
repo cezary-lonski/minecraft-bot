@@ -1859,9 +1859,20 @@ async function gatherMaterials(cells, label) {
 
 async function buildPlan(label, plan, origin, front, opts = {}) {
   const cells = plan.map(c => ({ ...c, pos: toWorld(origin, front, c.x, c.y, c.z) }))
-  // ozdoby (szyby, pochodnie): jak ich nie ma i nie da sie latwo zdobyc - zostaje puste miejsce
+  // najpierw to, bez czego sie nie da (sciany, dach, meble)
+  if (!await gatherMaterials(cells.filter(c => !c.optional), label)) return false
+  // ozdoby (szyby, pochodnie) tez probujemy zdobyc: szyby z piasku przepalonego na szklo, pochodnie z wegla i patykow.
+  // Jak sie nie uda - w tym miejscu zostaje puste miejsce zamiast zatrzymywac cala budowe.
+  const extras = {}
+  for (const c of cells) if (c.optional) extras[c.block] = (extras[c.block] || 0) + 1
+  for (const [name, n] of Object.entries(extras)) {
+    if (!running) return false
+    if (haveOf(name) >= n) continue
+    say(`Zdobywam jeszcze ${name} x${n} (ozdoby) - jak sie nie uda, zostawie puste miejsce.`)
+    setStatus(`zbieram ozdoby na ${label}: ${name} (mam ${haveOf(name)}/${n})`)
+    try { await obtain(name, n) } catch (e) { console.log('[bot] ozdoby:', e.message) }
+  }
   for (const c of cells) if (c.optional && haveOf(c.block) < cells.filter(o => o.block === c.block).length) c.block = 'air'
-  if (!await gatherMaterials(cells, label)) return false
 
   // budujemy bez kopania przez wlasne sciany
   const buildMoves = new Movements(bot)
@@ -2047,9 +2058,44 @@ const CROPS = [
   [/^(zbo|psze|zyt)/, 'wheat_seeds', 'zboze'], [/^marchew/, 'carrot', 'marchew'], [/^ziemniak/, 'potato', 'ziemniaki'], [/^burak/, 'beetroot_seeds', 'buraki']
 ]
 
+// wiadro wody: robi wiadro (3 zelaza) i nabiera wode ze zrodla w promieniu 64 blokow
+async function getWaterBucket() {
+  if (has('water_bucket')) return true
+  if (!await obtain('bucket', 1)) return false
+  const source = bot.findBlock({ matching: b => b.name === 'water' && Number(b.getProperties().level) === 0, maxDistance: 64 })
+  if (!source) { say('Nie widze wody w promieniu 64 blokow, nie mam czym nabrac.'); return false }
+  setStatus('nabieram wode do wiadra')
+  await goNearCell(source.position.offset(0, 1, 0))
+  await bot.equip(bot.inventory.items().find(i => i.name === 'bucket'), 'hand')
+  await bot.lookAt(source.position.offset(0.5, 0.5, 0.5), true)
+  bot.activateItem()
+  await sleep(600)
+  return has('water_bucket')
+}
+
+// oczko wodne: dziura w ziemi przed botem wypelniona woda z wiadra (pole wokol niej jest nawodnione)
+async function makePond() {
+  const home = bot.entity.position.floored()
+  if (!await getWaterBucket()) return null
+  if (bot.entity.position.distanceTo(home) > 3) await bot.pathfinder.goto(new goals.GoalNear(home.x, home.y, home.z, 1))
+  const front = facingAxis()
+  const hole = bot.entity.position.floored().offset(front.x * 3, -1, front.z * 3) // blok ziemi 3 kroki przed nami
+  await clearBlock(hole)
+  await bot.equip(bot.inventory.items().find(i => i.name === 'water_bucket'), 'hand')
+  await bot.lookAt(hole.offset(0.5, 0.05, 0.5), true) // dno dziury
+  bot.activateItem()
+  await sleep(600)
+  const w = bot.blockAt(hole)
+  return w && w.name === 'water' ? w : null
+}
+
 async function cropFarm(seed, label) {
-  const water = bot.findBlock({ matching: mcData.blocksByName.water.id, maxDistance: 16 })
-  if (!water) { say('Do farmy potrzebuje wody w promieniu 16 blokow - podejdz ze mna nad wode (albo zrob oczko wodne).'); return }
+  let water = bot.findBlock({ matching: mcData.blocksByName.water.id, maxDistance: 16 })
+  if (!water) {
+    say('Nie ma wody w poblizu - robie oczko wodne (wiadro wody).')
+    water = await makePond()
+    if (!water) { say('Nie udalo mi sie zrobic oczka wodnego - podejdz ze mna nad wode.'); return }
+  }
   if (!bot.inventory.items().some(i => i.name.endsWith('_hoe'))) await obtain('wooden_hoe', 1)
   if (!has(seed)) {
     say(`Nie mam ${seed} - zdobywam.`)
