@@ -109,6 +109,13 @@ Duze budowle (ponad 600 blokow - zamczysko, palac) nie mieszcza sie w ekwipunku,
 po kawalku na kolejne 3 warstwy, buduje je i idzie po nastepna partie. Materialow budowy nie wyrzuca przy sprzataniu ekwipunku.
 Wiszace czesci napisow (np. srodek litery Z, kropka w "!") dostaja tymczasowe podpory z ziemi, ktore na koncu znikaja.
 
+### Burzenie: `zburz <budowla>`
+`zburz zamek` (albo `usun budowle zamek`) - bot pyta "Na pewno?" (tak / nie, bez odpowiedzi nic nie burzy), a potem rozbiera
+od gory wszystko, co nalezy do budowli i jej wystroju. Trawy i terenu dookola nie rusza. Polozenie ustala tak samo jak
+`wystroj` (z pamieci albo z miejsca, w ktorym stoi bot). Uwaga: `usun dom` usuwa punkt "dom", jesli taki zapisales - wtedy `zburz dom`.
+
+Zamek, zamczysko i palac maja drabiny od razu w planie budowy (na mury, do wiez, na dach).
+
 ### Wystroj wnetrz: `wystroj <budowla>`
 `wystroj dom` / `dom villagera` / `zamek` / `zamczysko` / `palac` / `palac endu` / `baza podziemna` - bot urzadza wnetrze
 budowli, ktora postawil (pamieta, gdzie i jak obrocona stoi - plik builds.json):
@@ -116,7 +123,6 @@ budowli, ktora postawil (pamieta, gdzie i jak obrocona stoi - plik builds.json):
 - **oswietlenie**: latarnie zwisajace ze stropu (w palacu endu end rody), latarnie na slupkach na dziedzincu,
 - **meble**: stol z dwoma krzeslami ze schodow, stol warsztatowy, piec, wedzarnia, skrzynie, beczka, lozko,
   regaly z ksiazkami, w palacu endu biblioteka ze stolem do zaklinania, dywany (czerwone / fioletowe), obrazy,
-- **brakujace okna**: szyby, a w palacu endu fioletowe witraze, jesli budowa szla bez nich.
 
 Wstawia rzeczy tylko w puste miejsca - niczego nie burzy (poza otworami na drabiny).
 Budowle postawione starsza wersja (bot ich nie pamieta): postaw bota tam, gdzie zaczynal budowe - albo przy palacu endu

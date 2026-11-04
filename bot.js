@@ -1215,7 +1215,7 @@ function run() {
 const HELP = [
   'Zadania: start, etap <drewno|kamien|jedzenie|zelazo|diamenty>, zdobadz <surowiec|przedmiot|jedzenie> [ile], poluj [zwierze] [ile], przepal, scraftuj <co>, stop',
   'Ruch: tu, idz <ile> <przod|tyl|lewo|prawo>, idz do <x z | punkt | gracz>, chodz za mna, ochraniaj [gracz], zabij <gracz>, spij',
-  'Budowa: wystroj <budowla>, rozbierz rusztowania, buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
+  'Budowa: wystroj <budowla>, zburz <budowla>, rozbierz rusztowania, buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
   'Inne: status, co robisz, diag, chat <tekst>, permisja <nick>, odbierz <nick>, permisje'
@@ -2728,9 +2728,6 @@ const PLAN_FOR_TYPE = {
 
 function decorPlan(type) {
   const p = []
-  // brakujace ozdoby z planu (okna, w palacu endu fioletowe witraze) - wstawiane tylko tam, gdzie jest pusto
-  const base = PLAN_FOR_TYPE[type]
-  if (base) for (const c of base()) if (c.optional) p.push({ ...c, optional: false })
   if (type === 'dom') {
     decorateRoom(p, { x1: -2, x2: 2, z1: 1, z2: 5, y: 0, h: 4, keep: ['-2,5', '2,5', '-2,3', '2,1'] })
   } else if (type === 'dom villagera') {
@@ -2828,30 +2825,89 @@ function locateBuild(type) {
   return best
 }
 
+// drabiny (i otwory na nie) z wystroju danej budowli - dokladane od razu do planu budowy
+function ladderCells(type) {
+  const d = decorPlan(type)
+  if (!d) return []
+  const ladders = d.filter(c => c.block === 'ladder')
+  // otwory: komorki "air" z wystroju (dziury w dachu nad drabinami, drzwi do wiez)
+  return [...d.filter(c => c.block === 'air'), ...ladders]
+}
+
+// plan budowy razem z drabinami (palac endu ma je juz w planie)
+function planWithLadders(type, plan) {
+  return type === 'palac endu' ? plan : replaceInterior([...plan, ...ladderCells(type)])
+}
+
+// gdzie stoi budowla: z pamieci (builds.json), a gdy jej nie ma albo "tutaj" - rozpoznana z miejsca, w ktorym stoi bot
+function whereIsBuild(bt, here, verb) {
+  const rec = !here && [...builds].reverse().find(r => r.type === bt.type && (!r.dim || !bot.game?.dimension || r.dim === bot.game.dimension))
+  if (rec) return { origin: new Vec3(rec.origin.x, rec.origin.y, rec.origin.z), front: rec.front }
+  // budowla nieznana (np. z wczesniejszej wersji) - rozpoznajemy ja z miejsca, w ktorym stoi bot
+  const found = locateBuild(bt.type)
+  if (!found || found.score < 0.6) {
+    const anchor = ANCHORS[bt.type]
+    say(`Nie rozpoznaje tu: ${bt.type}. Postaw mnie ${anchor ? anchor.where + ' albo ' : ''}tam, gdzie zaczynalem budowe, i napisz "${verb} ${bt.type}".`)
+    return null
+  }
+  say(`Rozpoznalem ${bt.type} (zgodnosc ${Math.round(found.score * 100)}%).`)
+  recordBuild(bt.type, found.origin, found.front) // nastepnym razem juz bedzie wiadomo
+  return { origin: found.origin, front: found.front }
+}
+
+// "zburz <budowla>" / "usun budowle <budowla>": rozbiera wszystko, co nalezy do budowli (plan + wystroj),
+// od gory; nie rusza terenu dookola. Najpierw pyta, czy na pewno.
+function demolishCommand(text) {
+  const t = stripPl(text).trim().replace(/^budowl\w*\s*/, '')
+  const here = /\btutaj|\btu$/.test(t)
+  const bt = matchBuildType(t.replace(/\s*\b(tutaj|tu)$/, ''))
+  if (!bt) { say('Co zburzyc? dom, dom villagera, zamek, zamczysko, palac, palac endu, baza podziemna'); return }
+  const loc = whereIsBuild(bt, here, 'zburz')
+  if (!loc) return
+  return task(`burzenie: ${bt.type}`, async () => {
+    const answer = await askUser(`Na pewno zburzyc ${bt.type}? Wszystko z niego zniknie. (tak / nie)`,
+      [[/^(tak|zburz|dawaj|na pewno)$/, 'yes'], [/^(nie|stop|zostaw)$/, 'no']], 60000, 'no', 'Brak odpowiedzi - nic nie burze.')
+    if (answer !== 'yes' || !running) { if (running) say('Dobra, zostawiam.'); return }
+    const cells = [...PLAN_FOR_TYPE[bt.type](), ...(decorPlan(bt.type) || [])].filter(c => c.block !== 'air')
+    const targets = new Map()
+    for (const c of cells) {
+      const pos = toWorld(loc.origin, loc.front, c.x, c.y, c.z)
+      const blk = bot.blockAt(pos)
+      // tylko to, co pasuje do planu (np. bruk w miejscu muru) - trawy i ziemi dookola nie ruszamy
+      if (blk && blk.name !== 'air' && (sameKind(blk.name, c.block) || /_(bed|door)$/.test(blk.name))) targets.set(posKey(pos), pos)
+    }
+    const list = [...targets.values()].sort((a, b) => b.y - a.y)
+    say(`Burze ${bt.type}: ${list.length} blokow.`)
+    let removed = 0
+    for (const p of list) {
+      if (!running) break
+      setStatus(`burze ${bt.type}: ${removed}/${list.length}`)
+      const blk = bot.blockAt(p)
+      if (!blk || blk.name === 'air' || !bot.canDigBlock(blk)) continue
+      try {
+        await goNearCell(p)
+        try { await bot.tool.equipForBlock(blk, {}) } catch {}
+        await bot.dig(blk, true)
+        removed++
+      } catch (e) { console.log('[bot] burzenie:', e.message) }
+    }
+    if (running) {
+      say(`Zburzylem ${bt.type} (${removed} blokow).`)
+      for (let i = builds.length - 1; i >= 0; i--) if (builds[i].type === bt.type && builds[i].origin.x === loc.origin.x && builds[i].origin.z === loc.origin.z) builds.splice(i, 1)
+      saveJson('builds.json', builds)
+    }
+  })
+}
+
 // "wystroj <budowla> [tutaj]"
 function decorCommand(text) {
   const t = stripPl(text).trim()
   const here = /\btutaj|\btu$/.test(t)
   const bt = matchBuildType(t.replace(/\s*\b(tutaj|tu)$/, ''))
   if (!bt) { say('Co wystroic? dom, dom villagera, zamek, zamczysko, palac, palac endu, baza podziemna'); return }
-  let origin, front
-  const rec = !here && [...builds].reverse().find(r => r.type === bt.type && (!r.dim || !bot.game?.dimension || r.dim === bot.game.dimension))
-  if (rec) {
-    origin = new Vec3(rec.origin.x, rec.origin.y, rec.origin.z)
-    front = rec.front
-  } else {
-    // budowla nieznana (np. z wczesniejszej wersji) - rozpoznajemy ja z miejsca, w ktorym stoi bot
-    const found = locateBuild(bt.type)
-    if (!found || found.score < 0.6) {
-      const anchor = ANCHORS[bt.type]
-      say(`Nie rozpoznaje tu: ${bt.type}. Postaw mnie ${anchor ? anchor.where + ' albo ' : ''}tam, gdzie zaczynalem budowe, i napisz "wystroj ${bt.type}".`)
-      return
-    }
-    say(`Rozpoznalem ${bt.type} (zgodnosc ${Math.round(found.score * 100)}%).`)
-    origin = found.origin
-    front = found.front
-    recordBuild(bt.type, origin, front) // nastepnym razem juz bedzie wiadomo
-  }
+  const loc = whereIsBuild(bt, here, 'wystroj')
+  if (!loc) return
+  const { origin, front } = loc
   const plan = decorPlan(bt.type)
   if (!plan) { say(`Nie mam pomyslu na wystroj: ${bt.type}.`); return }
   return task(`wystroj: ${bt.type}`, () => buildPlan(`wystroj (${bt.type})`, plan, origin, front, { decor: true, passes: 3 }))
@@ -3029,7 +3085,7 @@ function buildCommand(text) {
   const front = facingAxis()
   const ahead = n => bot.entity.position.floored().offset(front.x * n, 0, front.z * n)
 
-  if (/^(dom vil|dom wies|chat|chalupa)/.test(t)) return task('budowa domu villagera', () => buildPlan('dom villagera', planVillagerHouse(), ahead(3), front, { type: 'dom villagera' }))
+  if (/^(dom vil|dom wies|chat|chalupa)/.test(t)) return task('budowa domu villagera', () => buildPlan('dom villagera', planWithLadders('dom villagera', planVillagerHouse()), ahead(3), front, { type: 'dom villagera' }))
   if (/^(baza pod|podziem|bunkier)/.test(t)) {
     return task('budowa bazy podziemnej', async () => {
       say('Kopie zejscie do bazy podziemnej.')
@@ -3069,9 +3125,9 @@ function buildCommand(text) {
       await buildPlan('palac endu', planEndPalace(), ahead(4), front, { passes: 6, type: 'palac endu' })
     })
   }
-  if (/^zamczysk/.test(t)) return task('budowa zamczyska', () => buildPlan('zamczysko', planBigCastle(), ahead(3), front, { type: 'zamczysko' }))
-  if (/^(palac|palacyk)/.test(t)) return task('budowa palacu', () => buildPlan('palac', planPalace(), ahead(3), front, { type: 'palac' }))
-  if (/^zam/.test(t)) return task('budowa zamku', () => buildPlan('zamek', planCastle(), ahead(3), front, { type: 'zamek' }))
+  if (/^zamczysk/.test(t)) return task('budowa zamczyska', () => buildPlan('zamczysko', planWithLadders('zamczysko', planBigCastle()), ahead(3), front, { type: 'zamczysko' }))
+  if (/^(palac|palacyk)/.test(t)) return task('budowa palacu', () => buildPlan('palac', planWithLadders('palac', planPalace()), ahead(3), front, { type: 'palac' }))
+  if (/^zam/.test(t)) return task('budowa zamku', () => buildPlan('zamek', planWithLadders('zamek', planCastle()), ahead(3), front, { type: 'zamek' }))
   if (/^farm/.test(t)) {
     const what = t.replace(/^farm\w*\s*/, '')
     const crop = CROPS.find(([re]) => re.test(what))
@@ -3087,7 +3143,7 @@ function buildCommand(text) {
     say('Farma czego? farma zboza / marchwi / ziemniakow / burakow / drzew / trzciny / zwierzat')
     return
   }
-  if (/^(dom|baz|chat)/.test(t)) return task('budowa domu', () => buildPlan('dom', planHouse(), ahead(3), front, { type: 'dom' }))
+  if (/^(dom|baz|chat)/.test(t)) return task('budowa domu', () => buildPlan('dom', planWithLadders('dom', planHouse()), ahead(3), front, { type: 'dom' }))
   say('Co zbudowac? dom, zamek, zamczysko, palac, palac endu, dom villagera, baza podziemna, skybase, napis: <tekst>, farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>')
 }
 
@@ -3730,6 +3786,8 @@ function handle(user, msg, whisper = false) {
   if (c === 'spij' || c === 'idz spac') return sleepCommand()
   if (/^(buduj|zbuduj|postaw budynek)$/.test(verb)) return buildCommand(args.join(' '))
   if (/^(wystroj|udekoruj|urzadz|umebluj)$/.test(verb)) return decorCommand(args.join(' '))
+  if (/^(zburz|zniszcz)$/.test(verb) || /^usun budowl/.test(c)) return demolishCommand(args.join(' '))
+  if (verb === 'usun' && args[0] && !findWaypoint(args.join(' ')) && matchBuildType(args.join(' '))) return demolishCommand(args.join(' '))
   if (/^(rozbierz|usun|posprzataj|sprzatnij) rusztowani/.test(c) || c === 'posprzataj') return cleanupCommand()
   if (c === 'przeszukaj' || c === 'przeszukaj skrzynie') return lootCommand()
   if (/^szukaj( skrzyn\w*)?$/.test(c)) return searchChestsCommand()
