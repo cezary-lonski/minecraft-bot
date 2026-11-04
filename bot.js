@@ -2582,6 +2582,7 @@ const CROPS = [
 // wiadro wody: robi wiadro (3 zelaza) i nabiera wode ze zrodla w promieniu 64 blokow
 async function getWaterBucket() {
   if (has('water_bucket')) return true
+  if (isCreative()) return await creativeGive('water_bucket', 1) // w kreatywnym wiadro wody prosto z menu
   if (!await obtain('bucket', 1)) return false
   const source = bot.findBlock({ matching: b => b.name === 'water' && Number(b.getProperties().level) === 0, maxDistance: 64 })
   if (!source) { say('Nie widze wody w promieniu 64 blokow, nie mam czym nabrac.'); return false }
@@ -2689,9 +2690,16 @@ async function treeFarm() {
 async function caneFarm() {
   if (!has('sugar_cane')) await obtain('sugar_cane', 4)
   if (!has('sugar_cane')) { say('Nie mam trzciny do posadzenia.'); return }
-  const spots = bot.findBlocks({ matching: ['dirt', 'grass_block', 'sand', 'red_sand'].map(n => mcData.blocksByName[n].id), maxDistance: 16, count: 300 })
+  const findSpots = () => bot.findBlocks({ matching: ['dirt', 'grass_block', 'sand', 'red_sand'].map(n => mcData.blocksByName[n].id), maxDistance: 16, count: 300 })
     .filter(p => bot.blockAt(p.offset(0, 1, 0))?.name === 'air' &&
       [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => bot.blockAt(p.offset(dx, 0, dz))?.name === 'water'))
+  let spots = findSpots()
+  if (!spots.length) {
+    // trzcina rosnie tylko tuz przy wodzie - jak jej nie ma, robimy oczko wodne
+    say('Nie ma wody w poblizu - robie oczko wodne pod trzcine.')
+    if (!await makePond()) { say('Nie udalo mi sie zrobic oczka wodnego.'); return }
+    spots = findSpots()
+  }
   let planted = 0
   for (const p of spots) {
     const cane = bot.inventory.items().find(i => i.name === 'sugar_cane')
