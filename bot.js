@@ -1228,6 +1228,8 @@ const HELP = [
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
   'Zespol: pomoz [bot], popros <bot> o <co> [ile], zabij <gracz|mob|imie>',
+  'Po bledzie (np. zabraklo blokow): daj mu brakujace rzeczy i napisz kontynuuj',
+  'Wlasne: projekty, buduj <projekt>, moje komendy, naucz sie <nazwa>: krok; krok, zapomnij komende <nazwa>',
   'Inne: status, co robisz, diag, chat <tekst>, permisja <nick>, odbierz <nick>, permisje'
 ]
 
@@ -2051,7 +2053,7 @@ async function gatherMaterials(cells, label) {
     await askTeamFor(name, need[name] - haveOf(name)) // moze kolega ma - przyniesie
     if (haveOf(name) >= need[name]) continue
     const ok = WOOD_RE.test(name) ? await collect(woodBlocks(), need[name], WOOD_RE) : await obtain(name, need[name])
-    if (!ok && running) { say(`Nie dam rady zbudowac ${label}. Brakuje mi: ${missingText()}.`); return false }
+    if (!ok && running) { say(`Nie dam rady zbudowac ${label}. Brakuje mi: ${missingText()}. Daj mi to i napisz "kontynuuj".`); return false }
   }
   return running
 }
@@ -2192,14 +2194,19 @@ async function placeStartMarker(feet) {
 }
 
 async function buildPlan(label, plan, origin, front, opts = {}) {
-  const startFeet = bot.entity.position.floored() // tu stoi bot, gdy zaczyna budowe
-  if (opts.type && !opts.decor && !opts.helper) recordBuild(opts.type, origin, front)
+  // tu stoi bot, gdy zaczyna budowe (przy "kontynuuj" - tam, gdzie zaczal za pierwszym razem)
+  const startFeet = opts.start ? new Vec3(opts.start.x, opts.start.y, opts.start.z) : bot.entity.position.floored()
+  if (opts.type && !opts.decor && !opts.helper && !opts.resume) recordBuild(opts.type, origin, front)
   // pomocnik robi prawa polowe (x >= 0); lider robi calosc i pomija to, co juz stoi
   const cells = plan.filter(c => opts.part !== 'right' || c.x >= 0).map(c => ({ ...c, pos: toWorld(origin, front, c.x, c.y, c.z) }))
   if (opts.type && !opts.helper) {
-    currentJob = { kind: opts.decor ? 'decor' : 'build', type: opts.type, label, origin: { x: origin.x, y: origin.y, z: origin.z }, front }
+    currentJob = { kind: opts.decor ? 'decor' : 'build', type: opts.type, label, origin: { x: origin.x, y: origin.y, z: origin.z }, front,
+      start: { x: startFeet.x, y: startFeet.y, z: startFeet.z } }
+    rememberJob(currentJob)
     if (cells.filter(c => c.block !== 'air').length > 40) askForHelp(currentJob)
   }
+  // material tylko na to, czego jeszcze nie ma (wazne przy "kontynuuj" i gdy pomocnik juz cos postawil)
+  const notPlaced = c => !sameKind(bot.blockAt(c.pos)?.name || '', c.block)
   for (const c of cells) if (c.temp) c.block = 'dirt' // tymczasowe podpory (np. pod kropka nad "i"), na koncu znikaja
   const solidCells = cells.filter(c => c.block !== 'air')
   const batched = solidCells.length > BATCH_LIMIT
@@ -2210,7 +2217,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
   try {
     // najpierw to, bez czego sie nie da (sciany, dach, meble); duze budowle - partiami w trakcie
     if (batched) say(`${label} to ${solidCells.length} blokow - materialy bede zbieral partiami, warstwa po warstwie.`)
-    else if (!await gatherMaterials(solidCells.filter(c => !c.optional), label)) return false
+    else if (!await gatherMaterials(solidCells.filter(c => !c.optional && notPlaced(c)), label)) return false
 
     // ozdoby (szyby, pochodnie): pytamy, czy po nie isc
     const extras = {}
@@ -2267,7 +2274,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
         // material na te warstwe (i ewentualnie nastepne, zeby nie chodzic po kazdy blok osobno)
         const batch = cells.filter(c => c.y >= y && c.y < y + 3 && c.block !== 'air' && (!c.optional || wantExtras))
         bot.pathfinder.setMovements(normalMoves)
-        if (!await gatherMaterials(batch.filter(c => !c.optional), `${label} (warstwy ${y - layers[0] + 1}-${y - layers[0] + 3})`)) return false
+        if (!await gatherMaterials(batch.filter(c => !c.optional && notPlaced(c)), `${label} (warstwy ${y - layers[0] + 1}-${y - layers[0] + 3})`)) return false
         if (wantExtras) for (const c of batch.filter(o => o.optional)) if (haveOf(c.block) < 1) { try { await obtain(c.block, 1) } catch {} }
       }
       bot.pathfinder.setMovements(buildMoves)
@@ -2281,7 +2288,8 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
           if (c.block === 'painting') { if (await hangPainting(c, front)) placed++; continue }
           if (y === layers[0] && !opts.decor) await fillBelow(c.pos)
           if (!hasSupport(c.pos)) { next.push(c); continue }
-          const it = invItemFor(c.block)
+          let it = invItemFor(c.block)
+          if (!it && c.alt) { c.block = c.alt; delete c.facing; it = invItemFor(c.block) } // nie mamy schodow - pelny blok
           if (!it) { if (!c.optional) failed++; continue }
           setStatus(`buduje ${label}: ${placed}/${total} blokow (warstwa ${y - layers[0] + 1}/${layers.length})`)
           try {
@@ -2291,6 +2299,8 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
             if (CONTAINERS.includes(c.block)) { ownChests.add(posKey(c.pos)); saveJson('chests.json', [...ownChests]) }
           } catch (e) {
             console.log(`[bot] nie postawilem ${c.block}: ${e.message}`)
+            // schody (dach) nie wyszly z dwoch podejsc - stawiamy zwykly blok, zeby w dachu nie zostala dziura
+            if (c.alt && c.facing && pass >= 1) { c.block = c.alt; delete c.facing }
             next.push(c)
           }
         }
@@ -2687,7 +2697,11 @@ const BUILD_TYPES = [
   { type: 'zamek', re: /^zam/, ahead: 3 },
   { type: 'dom', re: /^(dom|baz|chat)/, ahead: 3 }
 ]
-const matchBuildType = t => BUILD_TYPES.find(b => b.re.test(t))
+const matchBuildType = t => {
+  const d = findDesign(t)
+  if (d) return { type: d.key, ahead: d.ahead || 3, design: true }
+  return BUILD_TYPES.find(b => b.re.test(t))
+}
 
 // Pokoj: wnetrze x1..x2, z1..z2 (lokalnie), podloga na wysokosci y, h blokow wysokosci (strop na y+h).
 // Wejscie od strony z1. keep: komorki "x,z", ktorych nie zastawiamy (schody, przejscia, istniejace meble).
@@ -2767,6 +2781,41 @@ const PLAN_FOR_TYPE = {
   palac: () => planPalace(), 'palac endu': () => planEndPalace(), 'baza podziemna': () => planUndergroundRoom()
 }
 
+// ---------- wlasne budowle z kreatora (program z oknem zapisuje je jako pliki JSON) ----------
+// plik: { key, name, description, plan: [{x,y,z,block,...}], rooms: [...], ahead }
+const DESIGNS_DIR = process.env.MC_DESIGNS_DIR || pathLib.join(DATA_DIR, 'projekty')
+const designKey = s => stripPl(String(s || '')).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+function loadDesigns() {
+  try {
+    return fs.readdirSync(DESIGNS_DIR).filter(n => n.endsWith('.json')).map(n => {
+      try { return JSON.parse(fs.readFileSync(pathLib.join(DESIGNS_DIR, n), 'utf8')) } catch { return null }
+    }).filter(d => d && d.key && Array.isArray(d.plan))
+  } catch { return [] }
+}
+const designOf = type => loadDesigns().find(d => d.key === type) || null
+// "buduj wieza maga" - projekt o najdluzszej pasujacej nazwie
+function findDesign(text) {
+  const t = designKey(text)
+  return loadDesigns().filter(d => t === d.key || t.startsWith(d.key + ' ')).sort((a, b) => b.key.length - a.key.length)[0] || null
+}
+// plan budowli: wbudowanej albo z kreatora
+function planOf(type) {
+  if (PLAN_FOR_TYPE[type]) return PLAN_FOR_TYPE[type]()
+  const d = designOf(type)
+  return d ? d.plan.map(c => ({ ...c })) : null
+}
+function typeInfo(type) {
+  const bt = BUILD_TYPES.find(b => b.type === type)
+  if (bt) return bt
+  const d = designOf(type)
+  return d ? { type: d.key, ahead: d.ahead || 3, design: true } : null
+}
+function designsCommand() {
+  const list = loadDesigns()
+  if (!list.length) { say('Nie mam jeszcze wlasnych projektow. Zrob je w programie (zakladka Kreator).'); return }
+  say('Moje projekty: ' + list.map(d => `${d.name} (${d.plan.filter(c => c.block !== 'air').length} blokow)`).join(', ') + '. Napisz "buduj <nazwa>".')
+}
+
 function decorPlan(type) {
   const p = []
   if (type === 'dom') {
@@ -2826,6 +2875,9 @@ function decorPlan(type) {
     ladder(p, 0, 12, 11, 23, { x: 0, z: -1 }, [[0, 24, 12]])
   } else if (type === 'baza podziemna') {
     decorateRoom(p, { x1: -3, x2: 3, z1: 0, z2: 6, y: 0, h: 3, keep: ['-3,6', '3,6', '-3,3', '-2,1', '2,1', '-2,5', '2,5'] })
+  } else if (designOf(type)?.rooms?.length) {
+    // projekt z kreatora: pokoje zapisane przez kreator (pietra domu, wnetrza wiez)
+    for (const r of designOf(type).rooms) decorateRoom(p, r)
   } else {
     return null
   }
@@ -2840,8 +2892,8 @@ const FRONTS = [{ x: 0, z: 1 }, { x: 0, z: -1 }, { x: 1, z: 0 }, { x: -1, z: 0 }
 // Szuka budowli wokol bota: probuje 4 obrotow i dwoch punktow startu (bot stoi tam, gdzie zaczynal budowe,
 // albo na punkcie zaczepienia z ANCHORS) i sprawdza, jaka czesc blokow planu naprawde stoi w swiecie.
 function locateBuild(type) {
-  const bt = BUILD_TYPES.find(x => x.type === type)
-  const solid = PLAN_FOR_TYPE[type]().filter(c => c.block !== 'air' && !c.optional)
+  const bt = typeInfo(type)
+  const solid = planOf(type).filter(c => c.block !== 'air' && !c.optional)
   const step = Math.max(1, Math.floor(solid.length / 300))
   const sample = solid.filter((c, i) => i % step === 0)
   const feet = bot.entity.position.floored()
@@ -2877,7 +2929,7 @@ function ladderCells(type) {
 
 // plan budowy razem z drabinami (palac endu ma je juz w planie)
 function planWithLadders(type, plan) {
-  return type === 'palac endu' ? plan : replaceInterior([...plan, ...ladderCells(type)])
+  return type === 'palac endu' || !PLAN_FOR_TYPE[type] ? plan : replaceInterior([...plan, ...ladderCells(type)])
 }
 
 // gdzie stoi budowla: z pamieci (builds.json), a gdy jej nie ma albo "tutaj" - rozpoznana z miejsca, w ktorym stoi bot
@@ -2900,7 +2952,7 @@ function whereIsBuild(bt, here, verb) {
 // od gory; nie rusza terenu dookola. Najpierw pyta, czy na pewno.
 // rozbiera bloki budowli (plan + wystroj) od gory; part 'right' - tylko prawa polowa (pomocnik)
 async function demolishCells(type, loc, part) {
-  const cells = [...PLAN_FOR_TYPE[type](), ...(decorPlan(type) || [])].filter(c => c.block !== 'air' && (part !== 'right' || c.x >= 0))
+  const cells = [...planOf(type), ...(decorPlan(type) || [])].filter(c => c.block !== 'air' && (part !== 'right' || c.x >= 0))
   const targets = new Map()
   for (const c of cells) {
     const pos = toWorld(loc.origin, loc.front, c.x, c.y, c.z)
@@ -3133,6 +3185,12 @@ function buildCommand(text) {
   const t = stripPl(text).trim()
   const front = facingAxis()
   const ahead = n => bot.entity.position.floored().offset(front.x * n, 0, front.z * n)
+
+  // najpierw wlasne projekty z kreatora (nazwa moze zaczynac sie jak wbudowana, np. "domek nad jeziorem")
+  const design = findDesign(t)
+  if (design) {
+    return task(`budowa: ${design.name}`, () => buildPlan(design.name, design.plan.map(c => ({ ...c })), ahead(design.ahead || 3), front, { type: design.key, passes: 6 }))
+  }
 
   if (/^(dom vil|dom wies|chat|chalupa)/.test(t)) return task('budowa domu villagera', () => buildPlan('dom villagera', planWithLadders('dom villagera', planVillagerHouse()), ahead(3), front, { type: 'dom villagera' }))
   if (/^(baza pod|podziem|bunkier)/.test(t)) {
@@ -3749,18 +3807,18 @@ function joinJob(name, job, auto) {
     return task(`pomoc w walce: ${name}`, () => guardFor(name, 60000))
   }
   const origin = new Vec3(job.origin.x, job.origin.y, job.origin.z)
-  if (job.kind === 'build' && PLAN_FOR_TYPE[job.type]) {
+  if (job.kind === 'build' && planOf(job.type)) {
     say(`${tag}pomagam ${name} budowac: ${job.type}.`)
     return task(`pomoc w budowie (${job.type})`, () =>
-      buildPlan(`${job.type} (pomoc)`, planWithLadders(job.type, PLAN_FOR_TYPE[job.type]()), origin, job.front,
-        { type: job.type, helper: true, part: 'right', passes: job.type === 'palac endu' ? 6 : 4 }))
+      buildPlan(`${job.type} (pomoc)`, planWithLadders(job.type, planOf(job.type)), origin, job.front,
+        { type: job.type, helper: true, part: 'right', passes: job.type === 'palac endu' || !PLAN_FOR_TYPE[job.type] ? 6 : 4 }))
   }
   if (job.kind === 'decor' && decorPlan(job.type)) {
     say(`${tag}pomagam ${name} w wystroju: ${job.type}.`)
     return task(`pomoc w wystroju (${job.type})`, () =>
       buildPlan(`wystroj ${job.type} (pomoc)`, decorPlan(job.type), origin, job.front, { type: job.type, decor: true, helper: true, part: 'right', passes: 3 }))
   }
-  if (job.kind === 'demolish' && PLAN_FOR_TYPE[job.type]) {
+  if (job.kind === 'demolish' && planOf(job.type)) {
     say(`${tag}pomagam ${name} burzyc: ${job.type}.`)
     return task(`pomoc w burzeniu (${job.type})`, () => demolishCells(job.type, { origin, front: job.front }, 'right'))
   }
@@ -3884,23 +3942,207 @@ function killCommand(target) {
   return task(`walka: ${label}`, () => killEntity(ent, label))
 }
 
-// ---------- pamiec ostatniego zadania (po restarcie bot pyta, czy kontynuowac) ----------
+// ---------- wlasne komendy (makra) ----------
+// Komenda to lista krokow. Krok to zwykla komenda bota ("zdobadz drewno 10", "tu") albo instrukcja makra:
+//   powiedz <tekst> | czekaj <sekundy> | powtorz <n>: <krok> | szukaj moba <mob> | szukaj bloku <blok> |
+//   idz do celu | ogrodz cel [plotem|murkiem|<blok>] [promien] | zabij cel | jesli masz <rzecz>: <krok>
+// W krokach: $1, $2... - slowa po nazwie komendy, $* - wszystkie, $gracz - kto wydal komende.
+// Pliki JSON w folderze komend (wspolnym dla wszystkich botow z programu).
+const COMMANDS_DIR = process.env.MC_COMMANDS_DIR || pathLib.join(DATA_DIR, 'komendy')
+function loadMacros() {
+  try {
+    return fs.readdirSync(COMMANDS_DIR).filter(n => n.endsWith('.json')).map(n => {
+      try { return JSON.parse(fs.readFileSync(pathLib.join(COMMANDS_DIR, n), 'utf8')) } catch { return null }
+    }).filter(m => m && m.key && Array.isArray(m.steps) && m.steps.length)
+  } catch { return [] }
+}
+function saveMacro(m) {
+  fs.mkdirSync(COMMANDS_DIR, { recursive: true })
+  fs.writeFileSync(pathLib.join(COMMANDS_DIR, m.key.replace(/ /g, '_') + '.json'), JSON.stringify(m, null, 2))
+}
+// "kurczak 3" -> makro "kurczak" i argumenty ["3"]
+function findMacro(c) {
+  const t = designKey(c)
+  const m = loadMacros().filter(x => t === x.key || t.startsWith(x.key + ' ')).sort((a, b) => b.key.length - a.key.length)[0]
+  if (!m) return null
+  return { macro: m, args: t.slice(m.key.length).trim().split(/\s+/).filter(Boolean) }
+}
+
+let macroStop = false
+let macroDepth = 0
+// czeka, az bot skonczy zadanie uruchomione przez krok
+async function waitIdle() {
+  await sleep(700)
+  while ((running || activeTasks > 0 || pendingQuestion) && !macroStop) await sleep(300)
+}
+
+async function runMacro(macro, user, args) {
+  if (macroDepth >= 3) { say('Za duzo komend wewnatrz komend - przerywam.'); return }
+  if (running) { say(`Jestem zajety (${currentTask}), napisz "stop".`); return }
+  macroDepth++
+  if (macroDepth === 1) macroStop = false
+  const ctx = { target: null }
+  say(`Robie: ${macro.name} (${macro.steps.length} krokow).`)
+  try {
+    for (let i = 0; i < macro.steps.length && !macroStop; i++) {
+      const line = String(macro.steps[i])
+        .replace(/\$\*/g, args.join(' '))
+        .replace(/\$gracz/g, user || process.env.MC_PLAYER || '')
+        .replace(/\$(\d)/g, (m, n) => args[n - 1] || '')
+        .trim()
+      if (!line) continue
+      console.log(`[bot] ${macro.name}: krok ${i + 1}/${macro.steps.length}: ${line}`)
+      await macroStep(line, ctx, user)
+    }
+    if (!macroStop && macroDepth === 1) say(`Gotowe: ${macro.name}.`)
+  } catch (e) {
+    console.log('[bot] makro:', e)
+    say(`Blad w komendzie ${macro.name}: ${e.message}. Napraw kroki albo napisz "kontynuuj".`)
+  } finally {
+    macroDepth--
+  }
+}
+
+async function macroStep(line, ctx, user) {
+  const c = stripPl(line).toLowerCase().trim()
+  let m
+  if ((m = line.match(/^powiedz\s+(.+)$/i))) { say(m[1]); return }
+  if ((m = c.match(/^czekaj\s+(\d+)/))) { for (let t = 0; t < +m[1] * 2 && !macroStop; t++) await sleep(500); return }
+  if ((m = line.match(/^powt[oó]rz\s+(\d+)(?:\s*razy)?\s*:?\s*(.+)$/i))) {
+    for (let i = 0; i < Math.min(+m[1], 50) && !macroStop; i++) await macroStep(m[2], ctx, user)
+    return
+  }
+  if ((m = line.match(/^je[sś]li\s+masz\s+(.+?)\s*:\s*(.+)$/i))) {
+    const re = resolveGive(m[1])
+    if (bot.inventory.items().some(i => re.test(i.name))) await macroStep(m[2], ctx, user)
+    return
+  }
+  if ((m = c.match(/^szukaj\s+moba\s+(.+)$/))) {
+    const word = m[1]
+    await task(`szukam: ${word}`, async () => {
+      let ent = findMob(word)
+      for (let tries = 0; !ent && tries < 8 && running; tries++) {
+        setStatus(`szukam moba: ${word} (proba ${tries + 1}/8)`)
+        await explore()
+        ent = findMob(word)
+      }
+      if (!ent) { say(`Nie znalazlem: ${word}.`); macroStop = true; return }
+      ctx.target = ent
+      say(`Znalazlem: ${customName(ent) || ent.name}.`)
+      await bot.pathfinder.goto(new goals.GoalFollow(ent, 2)).catch(() => {})
+    })
+    return
+  }
+  if ((m = c.match(/^szukaj\s+bloku\s+(.+)$/))) {
+    const re = resolveGive(m[1])
+    const ids = mcData.blocksArray.filter(b => re.test(b.name)).map(b => b.id)
+    const pos = ids.length ? bot.findBlock({ matching: ids, maxDistance: 64 })?.position : null
+    if (!pos) { say(`Nie widze w poblizu: ${m[1]}.`); macroStop = true; return }
+    ctx.target = { position: pos, isBlock: true }
+    say(`Widze ${m[1]} na ${pos.x} ${pos.y} ${pos.z}.`)
+    return
+  }
+  if (/^idz do celu/.test(c)) {
+    if (!ctx.target) { say('Nie mam celu - najpierw "szukaj moba" albo "szukaj bloku".'); return }
+    const p = ctx.target.position
+    await task('ide do celu', () => bot.pathfinder.goto(new goals.GoalNear(p.x, p.y, p.z, 2)).catch(() => {}))
+    return
+  }
+  if ((m = c.match(/^ogrodz(?:\s+(cel|siebie|mnie|tu))?(?:\s+([a-z_]+))?(?:\s+(\d+))?/))) {
+    const who = m[1] || (ctx.target ? 'cel' : 'siebie')
+    let center = bot.entity.position
+    if (who === 'cel' && ctx.target) center = ctx.target.position
+    if (who === 'mnie' && user && bot.players[user]?.entity) center = bot.players[user].entity.position
+    const r = Math.max(1, Math.min(8, +(m[3] || 2)))
+    const word = m[2] || 'plotem'
+    let block = 'oak_fence'
+    if (/^mur/.test(word)) block = 'cobblestone_wall'
+    else if (!/^plot/.test(word)) { const re = resolveGive(word); block = mcData.blocksArray.find(b => re.test(b.name))?.name || 'oak_fence' }
+    else block = bot.inventory.items().find(i => /_fence$/.test(i.name))?.name || 'oak_fence'
+    const plan = []
+    ring(-r, r, -r, r, (x, z) => plan.push({ x, y: 0, z, block }))
+    const origin = center.floored()
+    await task(`ogradzam (${block})`, () => buildPlan(`ogrodzenie`, plan, origin, facingAxis(), { passes: 3 }))
+    return
+  }
+  if (/^zabij cel/.test(c)) {
+    if (!ctx.target || ctx.target.isBlock) { say('Nie mam celu do zaatakowania.'); return }
+    await task('walka z celem', () => killEntity(ctx.target, customName(ctx.target) || ctx.target.name))
+    return
+  }
+  // zwykla komenda bota (albo inna wlasna komenda)
+  handle(user, line)
+  await waitIdle()
+}
+
+// "naucz sie <nazwa>: krok; krok; krok" - nowa komenda wpisana na czacie
+function learnCommand(text) {
+  const m = text.match(/^(?:naucz\s+si[eę]|nowa\s+komenda|stw[oó]rz\s+komend[eę])\s+(.+?)\s*:\s*(.+)$/i)
+  if (!m) { say('Uzycie: naucz sie <nazwa>: krok; krok; krok   (np. naucz sie drewno: zdobadz drewno 16; idz do bazy; schowaj)'); return }
+  const name = m[1].trim()
+  const key = designKey(name)
+  if (!key) { say('Podaj nazwe komendy.'); return }
+  const steps = m[2].split(/\s*;\s*/).map(x => x.trim()).filter(Boolean)
+  saveMacro({ key, name, description: '', steps, createdAt: Date.now() })
+  say(`Nauczylem sie komendy "${name}" (${steps.length} krokow). Napisz "${name}", zeby ja wykonac.`)
+}
+function forgetMacro(name) {
+  const key = designKey(name)
+  const file = pathLib.join(COMMANDS_DIR, key.replace(/ /g, '_') + '.json')
+  if (!fs.existsSync(file)) { say(`Nie znam komendy "${name}".`); return }
+  fs.unlinkSync(file)
+  say(`Zapomnialem komende "${name}".`)
+}
+function macrosCommand() {
+  const list = loadMacros()
+  if (!list.length) { say('Nie mam wlasnych komend. Naucz mnie: naucz sie <nazwa>: krok; krok'); return }
+  say('Moje komendy: ' + list.map(x => x.name).join(', '))
+}
+
+// ---------- pamiec ostatniego zadania: "kontynuuj" i pytanie po restarcie ----------
 let lastCommand = null // tekst komendy, ktora wlasnie uruchamia zadanie (ustawiane w handle)
+// ostatnie zadanie zostaje w pamieci tez po bledzie (np. zabraklo blokow) - "kontynuuj" je wznawia.
+// Plik last_task.json jest tylko na czas zadania: jak zostal po restarcie, zadanie zostalo przerwane.
+let lastTask = loadJson('last_task.json', null) // { cmd, name, job }
 function rememberTask(name) {
   if (!lastCommand) return
-  saveJson('last_task.json', { cmd: lastCommand, name, at: Date.now() })
+  lastTask = { cmd: lastCommand, name, at: Date.now() }
+  saveJson('last_task.json', lastTask)
   lastCommand = null
+}
+function rememberJob(job) {
+  if (!lastTask) return
+  lastTask.job = job
+  if (running) saveJson('last_task.json', lastTask)
 }
 function forgetTask() {
   try { fs.unlinkSync(pathLib.join(DATA_DIR, 'last_task.json')) } catch {}
 }
+function continueCommand(user) {
+  const last = lastTask
+  if (!last?.cmd) { say('Nie mam czego kontynuowac.'); return }
+  if (running) { say(`Jestem zajety (${currentTask}), napisz "stop".`); return }
+  const job = last.job
+  // budowa i wystroj: w tym samym miejscu i obrocie, materialy tylko na brakujace bloki
+  if (job && (job.kind === 'build' || job.kind === 'decor') && planOf(job.type)) {
+    const plan = job.kind === 'decor' ? decorPlan(job.type) : planWithLadders(job.type, planOf(job.type))
+    say(`Kontynuuje: ${job.label || job.type}.`)
+    lastCommand = null
+    return task(`${job.kind === 'decor' ? 'wystroj' : 'budowa'}: ${job.type} (dalej)`, () =>
+      buildPlan(job.label || job.type, plan, new Vec3(job.origin.x, job.origin.y, job.origin.z), job.front, {
+        type: job.type, decor: job.kind === 'decor', resume: true, start: job.start,
+        passes: job.kind === 'decor' ? 3 : job.type === 'palac endu' || !PLAN_FOR_TYPE[job.type] ? 6 : undefined
+      }))
+  }
+  say(`Kontynuuje: ${last.cmd}.`)
+  return handle(user, last.cmd)
+}
 bot.once('spawn', () => setTimeout(async () => {
-  const last = loadJson('last_task.json', null)
-  if (!last?.cmd || running) return
+  if (!lastTask?.cmd || running || !fs.existsSync(pathLib.join(DATA_DIR, 'last_task.json'))) return
   replyTo = null
-  const answer = await askUser(`Ostatnio robilem: "${last.cmd}" (przerwane). Kontynuowac? (tak / nie)`,
+  const answer = await askUser(`Ostatnio robilem: "${lastTask.cmd}" (przerwane). Kontynuowac? (tak / nie)`,
     [[/^(tak|kontynuuj|dawaj|ok)$/, 'yes'], [/^(nie|stop)$/, 'no']], 60000, 'no')
-  if (answer === 'yes') handle(null, last.cmd)
+  if (answer === 'yes') continueCommand(null)
   else forgetTask()
 }, 6000))
 
@@ -3977,6 +4219,7 @@ bot.on('chat', (user, msg) => {
 
 function stopAll() {
   running = false
+  macroStop = true
   if (pendingQuestion) pendingQuestion.resolve(pendingQuestion.def)
   try { bot.pathfinder.setGoal(null); bot.pvp.stop(); bot.stopDigging(); bot.clearControlStates() } catch {}
   if (bot.isSleeping) bot.wake().catch(() => {})
@@ -4049,6 +4292,11 @@ function handleCommand(user, msg, whisper = false) {
   // te dzialaja zawsze, tez przed wejsciem do swiata
   if (/^(permisja|odbierz|permisje)$/.test(verb)) { permCommand(user, cmd); return }
   if (['stop', 'zostan', 'czekaj', 'stoj'].includes(c)) { stopAll(); return }
+  if (/^(kontynuuj|kontynuluj|kontynuj|kontynułuj|dalej|wznow|rob dalej|buduj dalej)$/.test(c)) return continueCommand(user)
+  if (/^(naucz si|nowa komenda|stworz komend)/.test(c)) return learnCommand(text)
+  if (/^(zapomnij|usun) komend/.test(c)) return forgetMacro(text.replace(/^\S+\s+komend\S*\s*/i, ''))
+  if (/^(moje|wlasne) komendy$/.test(c)) return macrosCommand()
+  if (/^(projekty|moje projekty|moje budowle)$/.test(c)) return designsCommand()
   if (c === 'status') { say(statusText()); return }
   if (c === 'co robisz' || c === 'co robisz?') { say(progressText()); return }
   if (c === 'diag') { const r = physicsReport(); console.log('[bot]', r); say(r); return }
@@ -4123,6 +4371,10 @@ function handleCommand(user, msg, whisper = false) {
   if (verb === 'trzymaj' && args.length) return holdCommand(args.join(' '))
   if (verb === 'postaw') return placeCommand(args)
   if (c === 'zaloz' || /^zaloz zbroj/.test(c)) return wearArmorCommand()
+
+  // wlasne komendy (makra)
+  const mac = findMacro(c)
+  if (mac) return runMacro(mac.macro, user, mac.args)
 
   const talk = SMALL_TALK.find(([re]) => re.test(c))
   if (talk) return say(talk[1](user))

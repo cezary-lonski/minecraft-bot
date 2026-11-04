@@ -14,7 +14,11 @@ Wchodzi do gry jako osobny gracz i wykonuje polecenia wydawane **po polsku na cz
 - rozmawia: odpowiada na „elo", „co tam", „dzięki"…
 - **kilka botów naraz** — pomagają sobie w budowie, wystroju, burzeniu i walce, wymieniają się przedmiotami,
 - ma **program z oknem (centrum sterowania)**: lista botów, panel ze stanem i ekwipunkiem, czat z podpowiedziami komend,
-  przyciski budowli i automatyczne aktualizacje.
+  przyciski budowli i automatyczne aktualizacje,
+- **Kreator budowli**: opisujesz budowlę słowami („dwupiętrowy dom z cegły z czerwonym dachem i ogrodem”), widzisz podgląd 3D
+  i bot ją buduje,
+- **Asystent AI** (Claude): podpowiada komendy, projektuje dowolne budowle (np. posąg kurczaka) i tworzy nowe komendy,
+- **własne komendy**: uczysz bota nowej komendy z kilku kroków (w programie albo na czacie gry).
 
 > **Wersja beta.** Bot działa, ale bywa zawodny. Błędy zgłaszaj w [Issues](https://github.com/cezary-lonski/minecraft-bot/issues),
 > najlepiej z kawałkiem logu z konsoli. Testowany na Minecraft **1.21.11** w świecie LAN.
@@ -24,6 +28,9 @@ Wchodzi do gry jako osobny gracz i wykonuje polecenia wydawane **po polsku na cz
 ## Spis treści
 - [Najprościej: program dla Windows](#najprościej-program-dla-windows)
 - [Kilka botów naraz](#kilka-botów-naraz)
+- [Kreator budowli](#kreator-budowli)
+- [Asystent AI](#asystent-ai)
+- [Własne komendy](#własne-komendy)
 - [Wersja konsolowa (Node.js)](#wersja-konsolowa-nodejs)
 - [Uruchomienie](#uruchomienie)
 - [Jak wydawać komendy](#jak-wydawać-komendy)
@@ -62,6 +69,54 @@ zakładkami w **Panelu bota**. Boty uruchomione z programu tworzą **zespół**:
   (do wyłączenia w ustawieniach bota: „Sam pomaga innym botom").
 - **Wymiana przedmiotów:** boty widzą nawzajem swoje ekwipunki. Gdy budującemu brakuje materiału, najpierw prosi kolegę,
   a dopiero potem idzie zbierać. Ręcznie: `poproś <bot> o <co> [ile]` — tamten przyniesie i wyrzuci przedmioty.
+
+## Kreator budowli
+Zakładka **🧱 Kreator budowli** w programie:
+1. Opisz budowlę po polsku, np. *„zamek z kamiennych cegieł z 4 okrągłymi wieżami i stożkowymi dachami”*, *„nowoczesna willa
+   z dużymi oknami i płaskim dachem z tarasem”*, *„japońska pagoda z trzema piętrami”*, *„latarnia morska w biało-czerwone pasy”*.
+2. Kliknij **✨ Stwórz** — pojawi się podgląd 3D (obracanie ⟲ ⟳, suwak warstw pokazuje wnętrze), lista materiałów
+   (⚠ = bot w survivalu sam ich nie zdobędzie) i to, co program zrozumiał. Suwakami i listami zmienisz rozmiar, materiały i dach.
+3. Wpisz nazwę i kliknij **💾 Zapisz** albo od razu **🏗 Zbuduj** (wybrany bot zacznie budować przed sobą).
+
+Rozumie m.in.: dom, willę/pałac, stodołę, wieżowiec, wieżę (kwadratową/okrągłą), zamek, kościół, piramidę, latarnię morską,
+wiatrak, most, studnię, altanę, igloo, arenę; rozmiar (*mały, duży, ogromny, 11x15, wysoka na 24, 3 piętra*); materiały i kolory
+ścian, dachu, okien (*z cegły, z ciemnego dębu, czerwony dach, niebieskie witraże*); style (*nowoczesny, średniowieczny, japoński,
+pustynny, zimowy, netherowy, z Endu, podwodny, bajkowy, wiejski, królewski, gotycki*); dodatki (*komin, ganek, balkon, kolumny,
+taras, blanki, iglica, kopuła, wieże, ogród, kwiaty, drzewa, latarnie*).
+
+Zapisane projekty są wspólne dla wszystkich botów. W grze: `projekty` (lista), `buduj <nazwa>`, `wystrój <nazwa>`, `zburz <nazwa>`,
+`kontynuuj`. Drugi bot pomaga przy nich tak samo jak przy wbudowanych budowlach.
+
+## Asystent AI
+Zakładka **🤖 Asystent AI** — rozmowa z Claude (model Claude Opus 5.5 firmy Anthropic):
+- pytasz, jak coś zrobić botem, a asystent podaje gotowe komendy (kliknięcie wstawia komendę do panelu bota),
+- *„dodaj budowlę kurczak – ma wyglądać jak mały kurczak z Minecrafta”* — projektuje dowolny kształt (posągi, zwierzęta,
+  statki…) i zapisuje go w Kreatorze,
+- *„stwórz komendę owce: znajdź owcę i ją ogródź”* — układa nową komendę z kroków,
+- *„niech Claude zbuduje kurczaka”* — wysyła polecenie do działającego bota.
+
+Potrzebny jest **klucz API** z [console.anthropic.com](https://console.anthropic.com/settings/keys) (🔑 w zakładce asystenta).
+Zapytania są płatne według cennika Anthropic. Klucz jest zapisany na komputerze w postaci zaszyfrowanej przez Windows.
+Bez klucza asystent tylko podpowiada komendy z listy, a Kreator budowli działa normalnie.
+
+## Własne komendy
+Zakładka **⚡ Moje komendy** albo czat gry: `naucz się <nazwa>: krok; krok; krok`. Komenda to lista kroków — każdy krok to zwykła
+komenda bota (`zdobadz drewno 16`, `idz do bazy`, `buduj wiatrak`) albo jeden z kroków specjalnych:
+
+| Krok | Działanie |
+|---|---|
+| `powiedz <tekst>` | pisze na czacie |
+| `czekaj <sekundy>` | przerwa |
+| `powtórz <n>: <krok>` | powtarza krok |
+| `szukaj moba <mob>` | chodzi po okolicy, aż znajdzie moba (kura, krowa, owca…) — to jest „cel” |
+| `szukaj bloku <blok>` | najbliższy blok danego typu — to jest „cel” |
+| `idź do celu` | podchodzi do celu |
+| `ogrodź cel płotem 2` | płot dookoła celu (promień 2); też `murkiem`, `ogrodź siebie` |
+| `zabij cel` | atakuje znalezionego moba |
+| `jeśli masz <rzecz>: <krok>` | krok tylko, gdy ma przedmiot |
+
+Słowa wpisane po nazwie komendy trafiają do kroków jako `$1`, `$2` (`$*` — wszystkie). Przykład:
+`naucz się drewno: zdobadz drewno $1; idz do bazy; schowaj` → `drewno 32`. Lista: `moje komendy`, usuwanie: `zapomnij komendę <nazwa>`.
 
 ## Wersja konsolowa (Node.js)
 Dla innych systemów albo gdy wolisz konsolę.
@@ -174,6 +229,7 @@ ustaw `MC_AUTH=microsoft` i `MC_USER=<email konta>` — przy pierwszym starcie b
 | `etap drewno / kamień / jedzenie / żelazo / diamenty` | jeden etap |
 | `śpij` | idzie do łóżka (32 bloki) i śpi do rana |
 | `stop` (`zostań`, `czekaj`, `stój`) | przerywa wszystko |
+| `kontynuuj` (`dalej`, `buduj dalej`) | wznawia ostatnie zadanie — np. gdy zabrakło mu bloków: daj mu je i napisz `kontynuuj`. Budowę kończy w tym samym miejscu i zbiera materiał tylko na brakujące bloki |
 
 Surowce: drewno, kamień, węgiel, żelazo, złoto, miedź, diament, redstone, lapis, szmaragd, piasek, żwir, ziemia, glina, obsydian,
 zboże, marchew, ziemniaki, buraki, grzyby, trzcina, dynia, melon, kaktus, bambus, wodorosty…

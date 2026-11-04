@@ -19,6 +19,9 @@
       <button class="nav active" data-view="play">🎮 Graj</button>
       <button class="nav" data-view="panel">🏠 Panel bota</button>
       <button class="nav" data-view="build">🏰 Budowanie</button>
+      <button class="nav" data-view="creator">🧱 Kreator budowli</button>
+      <button class="nav" data-view="ai">🤖 Asystent AI</button>
+      <button class="nav" data-view="macros">⚡ Moje komendy</button>
       <button class="nav" data-view="commands">📜 Komendy</button>
       <button class="nav" data-view="updates">⬆ Aktualizacje <span id="updDot" class="dot hidden"></span></button>
     </nav>
@@ -146,6 +149,115 @@
       </div>
     </section>
 
+    <!-- KREATOR BUDOWLI -->
+    <section class="view" id="view-creator">
+      <div class="creator">
+        <div class="card cr-left">
+          <h3>✨ Opisz budowlę</h3>
+          <textarea id="crText" rows="3" placeholder="np. dwupiętrowy dom z cegły z czerwonym dachem, kominem i ogrodem z kwiatami"></textarea>
+          <div class="chips small-chips" id="crExamples"></div>
+          <div class="row">
+            <button class="btn primary" id="crGen">✨ Stwórz</button>
+            <button class="btn" id="crAi" title="Asystent AI zaprojektuje dowolny kształt, np. posąg (potrzebny klucz API)">🤖 Zaprojektuj z AI</button>
+            <button class="btn ghost" id="crVariant" title="Te same założenia, trochę inny wynik">🎲 Wariant</button>
+          </div>
+          <div id="crUnderstood" class="understood"></div>
+          <div id="crTweak" class="tweak"></div>
+          <div class="row save-row">
+            <input id="crName" placeholder="Nazwa, np. domek nad jeziorem" maxlength="40">
+            <button class="btn primary" id="crSave">💾 Zapisz</button>
+            <button class="btn" id="crBuild" title="Zapisuje i każe wybranemu botowi budować">🏗 Zbuduj</button>
+          </div>
+          <p class="hint">Bot buduje <b>przed sobą</b>: ustaw go w grze przodem tam, gdzie ma stanąć budowla. Zapisany projekt
+            zbudujesz też komendą <code>buduj &lt;nazwa&gt;</code> (działa w grze i dla każdego bota). <code>wystrój</code>,
+            <code>zburz</code> i <code>kontynuuj</code> też działają.</p>
+        </div>
+        <div class="card cr-view">
+          <div class="cr-head">
+            <h3>Podgląd</h3>
+            <span id="crSize" class="muted"></span>
+            <div class="cr-tools">
+              <button class="btn ghost small" id="crRotL" title="Obróć">⟲</button>
+              <button class="btn ghost small" id="crRotR" title="Obróć">⟳</button>
+              <label class="muted small">warstwy <input type="range" id="crLayer" min="0" max="10" value="10"></label>
+            </div>
+          </div>
+          <canvas id="crCanvas" width="900" height="560"></canvas>
+          <div id="crWarn" class="hint"></div>
+          <div class="cr-mats" id="crMats"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>📁 Moje projekty <span class="muted small">– wspólne dla wszystkich botów</span></h3>
+        <div id="crList" class="proj-grid"></div>
+      </div>
+    </section>
+
+    <!-- ASYSTENT AI -->
+    <section class="view" id="view-ai">
+      <div class="card ai-card">
+        <div class="ai-head">
+          <h3>🤖 Asystent</h3>
+          <span id="aiModel" class="muted small"></span>
+          <div class="cr-tools">
+            <button class="btn ghost small" id="aiReset">🧹 Nowa rozmowa</button>
+            <button class="btn ghost small" id="aiKeyBtn">🔑 Klucz API</button>
+          </div>
+        </div>
+        <div id="aiKeyBox" class="ai-key hidden">
+          <p>Asystent korzysta z <b>Claude</b> (Anthropic). Potrzebny jest klucz API z
+            <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a> – zapytania są płatne
+            (zwykle grosze za pytanie, więcej za duże budowle). Klucz zapisuje się zaszyfrowany na tym komputerze.</p>
+          <div class="row"><input id="aiKey" type="password" placeholder="sk-ant-..."><button class="btn primary" id="aiKeySave">Zapisz klucz</button><button class="btn ghost" id="aiKeyDel">Usuń</button></div>
+          <p class="hint">Bez klucza asystent podpowiada komendy z listy, a Kreator budowli działa normalnie (bez AI).</p>
+        </div>
+        <div id="aiMsgs" class="ai-msgs"></div>
+        <div class="chips small-chips" id="aiExamples"></div>
+        <div class="ai-input">
+          <textarea id="aiText" rows="2" placeholder="Zapytaj, jak coś zrobić botem, albo poproś: „dodaj budowlę kurczak – ma wyglądać jak mały kurczak z Minecrafta”"></textarea>
+          <button id="aiSend" class="btn primary">Wyślij</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- MOJE KOMENDY -->
+    <section class="view" id="view-macros">
+      <div class="macro-wrap">
+        <div class="card">
+          <h3>⚡ Nowa komenda</h3>
+          <input type="hidden" id="mcKey">
+          <div class="row"><input id="mcName" placeholder="Nazwa komendy, np. drewno do bazy" maxlength="30"></div>
+          <div class="row"><input id="mcDesc" placeholder="Co robi (opcjonalnie)"></div>
+          <textarea id="mcSteps" rows="7" placeholder="Jeden krok w linii, np.&#10;zdobadz drewno 16&#10;idz do bazy&#10;schowaj&#10;powiedz Drewno w skrzyni!"></textarea>
+          <div class="row">
+            <button class="btn primary" id="mcSave">💾 Zapisz</button>
+            <button class="btn" id="mcRun">▶ Zapisz i uruchom</button>
+            <button class="btn ghost" id="mcClear">Wyczyść</button>
+            <button class="btn ghost" id="mcAi" title="Opisz słowami, a asystent AI ułoży kroki">🤖 Ułóż z AI</button>
+          </div>
+          <p class="hint">Komenda działa w grze i w programie – wystarczy wpisać jej nazwę (np. <code>drewno do bazy</code>).
+            Słowa po nazwie trafiają do kroków jako <code>$1</code>, <code>$2</code>. Na czacie gry: <code>naucz się nazwa: krok; krok</code>.</p>
+        </div>
+        <div class="card">
+          <h3>📖 Kroki, których możesz użyć</h3>
+          <div class="crow"><code>dowolna komenda bota</code><span>np. zdobadz drewno 16, idz do bazy, buduj dom</span></div>
+          <div class="crow"><code>powiedz &lt;tekst&gt;</code><span>bot pisze na czacie</span></div>
+          <div class="crow"><code>czekaj &lt;sekundy&gt;</code><span>przerwa</span></div>
+          <div class="crow"><code>powtórz &lt;n&gt;: &lt;krok&gt;</code><span>robi krok kilka razy</span></div>
+          <div class="crow"><code>szukaj moba &lt;mob&gt;</code><span>chodzi, aż znajdzie (kura, krowa, owca…) – to jest „cel”</span></div>
+          <div class="crow"><code>szukaj bloku &lt;blok&gt;</code><span>najbliższy blok danego typu – to jest „cel”</span></div>
+          <div class="crow"><code>idź do celu</code><span>podchodzi do celu</span></div>
+          <div class="crow"><code>ogrodź cel płotem 2</code><span>płot dookoła celu (promień 2); też „murkiem” albo „siebie”</span></div>
+          <div class="crow"><code>zabij cel</code><span>atakuje znalezionego moba</span></div>
+          <div class="crow"><code>jeśli masz &lt;rzecz&gt;: &lt;krok&gt;</code><span>krok tylko, gdy ma przedmiot</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>📁 Zapisane komendy</h3>
+        <div id="mcList" class="macro-list"></div>
+      </div>
+    </section>
+
     <!-- KOMENDY -->
     <section class="view" id="view-commands">
       <input id="cmdSearch" class="search" placeholder="Szukaj komendy, np. kilof, baza, jedzenie, pomoc…">
@@ -212,6 +324,8 @@
 
   <div id="toast" class="toast hidden"></div>
   <script src="data.js"></script>
+  <script src="designer.js"></script>
   <script src="app.js"></script>
+  <script src="creator.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 {
   "name": "minecraft-bot",
   "productName": "Minecraft Bot",
-  "version": "0.3.0-beta",
+  "version": "0.4.0-beta",
   "description": "Bot do Minecrafta (Mineflayer) sterowany komendami po polsku, z centrum sterowania",
   "main": "gui/main.js",
   "scripts": {
@@ -18,6 +18,7 @@
   "author": "cezary-lonski",
   "license": "ISC",
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.5.0",
     "electron-updater": "^6.8.11",
     "minecraft-data": "^3.119.0",
     "mineflayer": "^4.39.0",

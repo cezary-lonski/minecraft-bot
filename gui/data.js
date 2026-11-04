@@ -20,6 +20,7 @@ window.COMMANDS = [
   { cat: 'Zadania', cmd: 'etap <drewno|kamien|jedzenie|zelazo|diamenty>', desc: 'Jeden etap' },
   { cat: 'Zadania', cmd: 'spij', desc: 'Idzie do łóżka i śpi do rana' },
   { cat: 'Zadania', cmd: 'stop', desc: 'Przerywa wszystko' },
+  { cat: 'Zadania', cmd: 'kontynuuj', desc: 'Wznawia ostatnie zadanie, np. po „brakuje mi bloków” – najpierw daj mu je' },
   // Crafting
   { cat: 'Crafting', cmd: 'scraftuj <co> <ile>', desc: 'Brakujące składniki zdobywa sam' },
   { cat: 'Crafting', cmd: 'scraftuj diamentowy set', desc: 'Cała zbroja + narzędzia (zakłada)' },
@@ -59,6 +60,11 @@ window.COMMANDS = [
   { cat: 'Budowanie', cmd: 'wystroj <budowla>', desc: 'Meble, latarnie, drabiny, dywany, obrazy' },
   { cat: 'Budowanie', cmd: 'zburz <budowla>', desc: 'Rozbiera budowlę (pyta o potwierdzenie)' },
   { cat: 'Budowanie', cmd: 'rozbierz rusztowania', desc: 'Usuwa słupki rusztowań' },
+  { cat: 'Budowanie', cmd: 'projekty', desc: 'Lista budowli z Kreatora (buduj <nazwa>)' },
+  // Wlasne komendy
+  { cat: 'Własne komendy', cmd: 'moje komendy', desc: 'Lista komend, których nauczyłeś bota' },
+  { cat: 'Własne komendy', cmd: 'naucz sie <nazwa>: <krok>; <krok>', desc: 'Nowa komenda z kroków, np. naucz się drewno: zdobadz drewno 16; idz do bazy; schowaj' },
+  { cat: 'Własne komendy', cmd: 'zapomnij komende <nazwa>', desc: 'Usuwa własną komendę' },
   // Zespol
   { cat: 'Zespół', cmd: 'pomoz', desc: 'Dołącza do pracy innego bota (budowa, wystrój, burzenie, walka)' },
   { cat: 'Zespół', cmd: 'pomoz <bot>', desc: 'Pomaga konkretnemu botowi' },
@@ -94,6 +100,7 @@ window.FARMS = [
 ]
 
 window.QUICK = [
+  { cmd: 'kontynuuj', label: '⏯ Kontynuuj' },
   { cmd: 'tu', label: '📍 Do mnie', needsPlayer: true },
   { cmd: 'chodz za mna', label: '🚶 Za mną', needsPlayer: true },
   { cmd: 'ochraniaj', label: '🛡 Ochraniaj', needsPlayer: true },

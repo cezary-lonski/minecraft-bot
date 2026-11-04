@@ -16,8 +16,21 @@ contextBridge.exposeInMainWorld('bridge', {
   openDataDir: id => ipcRenderer.invoke('app:dataDir', id),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  // kreator budowli i wlasne komendy
+  blocks: () => ipcRenderer.invoke('designer:blocks'),
+  designs: () => ipcRenderer.invoke('designs:list'),
+  saveDesign: spec => ipcRenderer.invoke('designs:save', spec),
+  deleteDesign: key => ipcRenderer.invoke('designs:delete', key),
+  commands: () => ipcRenderer.invoke('commands:list'),
+  saveCommand: c => ipcRenderer.invoke('commands:save', c),
+  deleteCommand: key => ipcRenderer.invoke('commands:delete', key),
+  // asystent AI
+  aiHasKey: () => ipcRenderer.invoke('ai:hasKey'),
+  aiSetKey: key => ipcRenderer.invoke('ai:setKey', key),
+  aiChat: (text, botId) => ipcRenderer.invoke('ai:chat', text, botId),
+  aiReset: () => ipcRenderer.invoke('ai:reset'),
   on: (channel, cb) => {
-    if (!['log', 'status', 'bot-state', 'update', 'team'].includes(channel)) return
+    if (!['log', 'status', 'bot-state', 'update', 'team', 'ai-event', 'designs-changed', 'commands-changed'].includes(channel)) return
     ipcRenderer.on(channel, (e, data) => cb(data))
   }
 })

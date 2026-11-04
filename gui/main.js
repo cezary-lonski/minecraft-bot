@@ -2,10 +2,12 @@
 // Kazdy bot to profil (nick, swiat, ustawienia) z wlasnym folderem danych - pamieta punkty, budowle, ostatnie zadanie.
 // Uruchomiony bot dziala jako osobny proces Node (bot.js); okno wysyla mu komendy na wejscie i czyta jego wyjscie.
 // Kilka botow moze dzialac naraz - ich wiadomosci zespolowe (@@TEAM) sa przekazywane miedzy nimi.
-const { app, BrowserWindow, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, safeStorage } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { spawn } = require('child_process')
+const Designer = require('./designer')
+const { createAssistant } = require('./ai')
 
 let autoUpdater = null
 try { autoUpdater = require('electron-updater').autoUpdater } catch { /* brak w trybie deweloperskim */ }
@@ -29,6 +31,20 @@ const loadProfiles = () => readJson(PROFILES_FILE, []).map(p => ({ ...BOT_DEFAUL
 const saveProfiles = list => writeJson(PROFILES_FILE, list)
 const appSettings = () => ({ ...APP_DEFAULTS, ...readJson(APP_SETTINGS_FILE, {}) })
 const botDir = id => path.join(DATA, 'bots', id)
+// budowle z kreatora i wlasne komendy sa wspolne dla wszystkich botow
+const DESIGNS_DIR = path.join(DATA, 'projekty')
+const COMMANDS_DIR = path.join(DATA, 'komendy')
+const keyOf = name => Designer.strip(name).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+const fileOf = (dir, key) => path.join(dir, key.replace(/ /g, '_') + '.json')
+
+// nazwy blokow z gry (do sprawdzania budowli) - z minecraft-data dla najnowszej wersji
+let BLOCKS = []
+try {
+  const md = require('minecraft-data')
+  const ver = ['1.21.11', '1.21.10', '1.21.9', '1.21.8', '1.21.6', '1.21.5', '1.21.4'].find(v => { try { return md(v) } catch { return false } })
+  BLOCKS = md(ver).blocksArray.map(b => b.name)
+  Designer.setBlocks(BLOCKS)
+} catch (e) { console.log('minecraft-data:', e.message) }
 
 function send(channel, data) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, data)
@@ -49,7 +65,10 @@ function createWindow() {
 
 // ---------- procesy botow ----------
 function botEnv(p) {
-  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', MC_GUI: '1', MC_DATA_DIR: botDir(p.id), MC_USER: p.name || 'Claude', MC_MODE: p.mode }
+  const env = {
+    ...process.env, ELECTRON_RUN_AS_NODE: '1', MC_GUI: '1', MC_DATA_DIR: botDir(p.id), MC_USER: p.name || 'Claude', MC_MODE: p.mode,
+    MC_DESIGNS_DIR: DESIGNS_DIR, MC_COMMANDS_DIR: COMMANDS_DIR
+  }
   delete env.MC_PORT
   if (p.mode === 'lan') {
     Object.assign(env, { MC_HOST: 'localhost', MC_PORT: String(p.port), MC_RTP: '0', MC_AUTOLOGIN: '0', MC_CHAT_DELAY: p.chatDelay || '600' })
@@ -104,7 +123,11 @@ function startBot(id) {
 
 function handleBotLine(id, line) {
   if (line.startsWith('@@STATUS ')) {
-    try { send('status', { id, ...JSON.parse(line.slice(9)) }) } catch {}
+    try {
+      const st = JSON.parse(line.slice(9))
+      lastStatus.set(id, { connected: st.connected, health: st.health, food: st.food, pos: st.pos, task: st.task, gameMode: st.gameMode })
+      send('status', { id, ...st })
+    } catch {}
     return
   }
   if (line.startsWith('@@TEAM ')) {
@@ -175,6 +198,85 @@ ipcMain.handle('app:version', () => app.getVersion())
 ipcMain.handle('app:settings', () => appSettings())
 ipcMain.handle('app:saveSettings', (e, s) => { writeJson(APP_SETTINGS_FILE, { ...appSettings(), ...s }); return { ok: true } })
 ipcMain.handle('app:dataDir', (e, id) => { const dir = id ? botDir(id) : DATA; fs.mkdirSync(dir, { recursive: true }); shell.openPath(dir); return dir })
+
+// ---------- kreator budowli ----------
+// zapis: plan liczy ten sam generator co podglad w oknie
+function saveDesign(spec) {
+  const name = String(spec.name || '').trim().slice(0, 40)
+  const key = keyOf(name)
+  if (!key) return { ok: false, error: 'Podaj nazwę budowli.' }
+  if (/^(dom|dom villagera|zamek|zamczysko|palac|palac endu|baza podziemna|skybase|napis|farma)( |$)/.test(key)) return { ok: false, error: `Nazwa "${name}" jest zajęta przez wbudowaną budowlę - wybierz inną.` }
+  const r = Designer.generate(spec)
+  const blocks = r.cells.filter(c => c.block !== 'air').length
+  if (!blocks) return { ok: false, error: 'Budowla nie ma żadnych bloków.' }
+  if (blocks > 40000) return { ok: false, error: `Za duża budowla (${blocks} bloków, max 40000).` }
+  const rec = { key, name, description: spec.description || '', spec: { ...spec, name }, plan: r.cells, rooms: r.rooms, ahead: r.ahead, size: r.size, blocks, created: Date.now() }
+  writeJson(fileOf(DESIGNS_DIR, key), rec)
+  send('designs-changed', {})
+  return { ok: true, key, name, size: r.size, blocks, materials: r.materials, warnings: r.warnings }
+}
+function listDir(dir) {
+  try {
+    return fs.readdirSync(dir).filter(n => n.endsWith('.json')).map(n => readJson(path.join(dir, n), null)).filter(Boolean)
+  } catch { return [] }
+}
+ipcMain.handle('designer:blocks', () => BLOCKS)
+ipcMain.handle('designs:list', () => listDir(DESIGNS_DIR).map(d => ({ key: d.key, name: d.name, description: d.description, spec: d.spec, size: d.size, blocks: d.blocks, created: d.created })).sort((a, b) => (b.created || 0) - (a.created || 0)))
+ipcMain.handle('designs:save', (e, spec) => saveDesign(spec))
+ipcMain.handle('designs:delete', (e, key) => { try { fs.unlinkSync(fileOf(DESIGNS_DIR, key)) } catch {} send('designs-changed', {}); return { ok: true } })
+
+// ---------- wlasne komendy ----------
+const BUILTIN_VERBS = /^(stop|tu|jak tam|status|eq|daj|wez|zdobadz|scraftuj|buduj|idz|zabij|pomoz|popros|baza|kontynuuj|komendy|naucz|zapomnij|projekty|moje komendy)( |$)/
+function saveCommand(c) {
+  const name = String(c.name || '').trim().slice(0, 30)
+  const key = keyOf(name)
+  if (!key) return { ok: false, error: 'Podaj nazwę komendy.' }
+  if (BUILTIN_VERBS.test(key)) return { ok: false, error: `"${name}" to już wbudowana komenda - wybierz inną nazwę.` }
+  const steps = (c.steps || []).map(s => String(s).trim()).filter(Boolean).slice(0, 60)
+  if (!steps.length) return { ok: false, error: 'Komenda musi mieć co najmniej jeden krok.' }
+  writeJson(fileOf(COMMANDS_DIR, key), { key, name, description: c.description || '', steps, created: Date.now() })
+  send('commands-changed', {})
+  return { ok: true, key, name }
+}
+ipcMain.handle('commands:list', () => listDir(COMMANDS_DIR).sort((a, b) => (b.created || 0) - (a.created || 0)))
+ipcMain.handle('commands:save', (e, c) => saveCommand(c))
+ipcMain.handle('commands:delete', (e, key) => { try { fs.unlinkSync(fileOf(COMMANDS_DIR, key)) } catch {} send('commands-changed', {}); return { ok: true } })
+
+// ---------- asystent AI ----------
+// klucz API szyfrowany przez system (safeStorage), zapisany w ustawieniach programu
+function getKey() {
+  const s = appSettings()
+  if (!s.apiKeyEnc) return null
+  try { return safeStorage.decryptString(Buffer.from(s.apiKeyEnc, 'base64')) } catch { return null }
+}
+const assistant = createAssistant({
+  getKey,
+  saveDesign,
+  saveCommand,
+  sendCommand: (who, text) => {
+    const list = loadProfiles()
+    const p = list.find(x => x.id === who) || list.find(x => x.name.toLowerCase() === String(who || '').toLowerCase()) || list.find(x => procs.has(x.id))
+    if (!p) return { ok: false, error: 'Żaden bot nie działa.' }
+    return sendCommand(p.id, text)
+  },
+  state: () => ({
+    bots: loadProfiles().map(p => ({ name: p.name, mode: p.mode, running: procs.has(p.id), status: lastStatus.get(p.id) || null })),
+    buildings: listDir(DESIGNS_DIR).map(d => d.name),
+    commands: listDir(COMMANDS_DIR).map(c => ({ name: c.name, steps: c.steps }))
+  }),
+  emit: ev => send('ai-event', ev)
+})
+const lastStatus = new Map() // ostatni stan kazdego bota (dla asystenta)
+ipcMain.handle('ai:hasKey', () => !!getKey())
+ipcMain.handle('ai:setKey', (e, key) => {
+  const k = String(key || '').trim()
+  if (!k) { writeJson(APP_SETTINGS_FILE, { ...appSettings(), apiKeyEnc: null }); return { ok: true } }
+  if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'System nie pozwala bezpiecznie zapisać klucza.' }
+  writeJson(APP_SETTINGS_FILE, { ...appSettings(), apiKeyEnc: safeStorage.encryptString(k).toString('base64') })
+  return { ok: true }
+})
+ipcMain.handle('ai:chat', (e, text, botId) => assistant.chat(text, { botId }))
+ipcMain.handle('ai:reset', () => { assistant.reset(); return { ok: true } })
 
 // ---------- aktualizacje (GitHub Releases) ----------
 function setupUpdates() {
