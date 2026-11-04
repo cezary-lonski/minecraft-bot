@@ -317,7 +317,6 @@ async function stepTo(dir, dy) {
 // schodami w dol do wysokosci y (schody, nie pionowy szyb - da sie wyjsc i nie spada sie w dziure)
 async function digDownTo(y) {
   let dir = awayFromDanger() || facingAxis()
-  mineEntrance = bot.entity.position.floored() // tedy uciekamy, gdyby przyszedl warden
   say(`Kopie schodami w dol do y=${y}.`)
   for (let i = 0; i < 200 && running && bot.entity.position.y > y + 0.5; i++) {
     setStatus(`kopie schodami w dol: jestem na y=${Math.floor(bot.entity.position.y)}, cel y=${y}`)
@@ -583,7 +582,6 @@ function findLand(radius = 14) {
 // miejsca, gdzie byl warden albo sculk (deep dark) - przy kopaniu trzymamy sie od nich z daleka
 const dangerZones = []
 let lastWardenSeen = 0
-let mineEntrance = null // gora schodow ostatniej kopalni - droga ucieczki
 const SCULK = ['sculk_shrieker', 'sculk_sensor', 'calibrated_sculk_sensor', 'sculk_catalyst', 'sculk']
 
 function markDangerZone(pos) {
@@ -610,6 +608,78 @@ function awayFromDanger() {
 function sculkNear(r) {
   const ids = SCULK.map(n => mcData.blocksByName[n]?.id).filter(x => x !== undefined)
   return bot.findBlock({ matching: ids, maxDistance: r })
+}
+
+// kierunek po osi od podanego punktu (np. od wardena)
+function axisAwayFrom(pos) {
+  const me = bot.entity.position
+  const dx = me.x - pos.x
+  const dz = me.z - pos.z
+  if (Math.abs(dx) < 0.5 && Math.abs(dz) < 0.5) return facingAxis()
+  return Math.abs(dx) > Math.abs(dz) ? { x: Math.sign(dx), z: 0 } : { x: 0, z: Math.sign(dz) }
+}
+
+let escaping = false
+async function escapeWarden() {
+  if (escaping) return
+  escaping = true
+  running = false // przerywamy zadanie: kopanie i chodzenie robia halas, ktory go przyciaga
+  lastWardenSeen = Date.now()
+  setMode('warden', 'Warden! Uciekam i kopie waski tunel - on sie w nim nie zmiesci.')
+  const solid = p => { const b = bot.blockAt(p); return !!b && b.boundingBox === 'block' }
+  let lastPos = bot.entity.position.clone()
+  let stuckSince = Date.now()
+  try {
+    bot.pvp.stop()
+    bot.pathfinder.setGoal(null)
+    for (const until = Date.now() + 120000; Date.now() < until && bot.health > 0;) {
+      bot.pathfinder.setGoal(null) // konczace sie zadanie moglo jeszcze cos ustawic
+      const warden = bot.nearestEntity(e => e.name === 'warden')
+      const dist = warden ? warden.position.distanceTo(bot.entity.position) : Infinity
+      if (dist < 40) { lastWardenSeen = Date.now(); markDangerZone(warden.position) }
+      if (Date.now() - lastWardenSeen > 10000) break // nie widac go od 10 s - jestesmy bezpieczni
+
+      const feet = bot.entity.position.floored()
+      let dir = warden ? axisAwayFrom(warden.position) : facingAxis()
+      for (let turn = 0; turn < 3 && dangerNear(feet.offset(dir.x, 0, dir.z)); turn++) dir = turnRight(dir) // nie w lawe
+      const legs = feet.offset(dir.x, 0, dir.z)
+      const head = legs.offset(0, 1, 0)
+
+      if (solid(legs) || solid(head)) {
+        // sciana: stajemy i przekopujemy przejscie (najpierw glowa, potem nogi)
+        bot.clearControlStates()
+        for (const p of [head, legs]) {
+          const b = bot.blockAt(p)
+          if (!b || b.boundingBox !== 'block' || !bot.canDigBlock(b)) continue
+          try { await bot.tool.equipForBlock(b, {}) } catch {}
+          try { await bot.dig(b, true) } catch {}
+        }
+      } else {
+        await bot.lookAt(bot.entity.position.offset(dir.x * 6, 1.6, dir.z * 6), true)
+        bot.setControlState('forward', true)
+        bot.setControlState('sprint', true)
+        bot.setControlState('jump', bot.entity.isCollidedHorizontally) // stopien o 1 blok - przeskakujemy
+        await sleep(150)
+      }
+
+      // brak postepu, a warden tuz obok: nie ma gdzie uciec - bronimy sie
+      if (bot.entity.position.distanceTo(lastPos) > 0.7) { lastPos = bot.entity.position.clone(); stuckSince = Date.now() }
+      else if (warden && dist < 4 && Date.now() - stuckSince > 2500) {
+        if (Date.now() - stuckSince < 3000) say('Nie mam gdzie uciec - walcze!')
+        await bestSword()
+        bot.attack(warden)
+        await sleep(600)
+      }
+      if (bot.health < 8) await eatIfLow()
+    }
+  } catch (e) {
+    console.log('[bot] ucieczka blad:', e.message)
+  } finally {
+    bot.clearControlStates()
+    escaping = false
+    setMode('normal')
+    if (bot.health > 0) say('Ucieklem przed wardenem. To miejsce bede omijal przy kopaniu.')
+  }
 }
 
 let busy = false
@@ -643,37 +713,10 @@ async function survivalTick() {
       setMode('normal')
     }
 
-    // 3. warden: nie do pokonania - przerywamy zadanie (kopanie robi halas, ktory go przyciaga)
-    //    i uciekamy schodami, ktorymi zeszlismy, a jak ich nie ma - jak najdalej od niego
+    // 3. warden: nie do pokonania - przerywamy zadanie i uciekamy (osobna petla, patrz escapeWarden)
+    if (escaping) return
     const warden = bot.nearestEntity(e => e.name === 'warden' && e.position.distanceTo(bot.entity.position) < 40)
-    if (warden) {
-      lastWardenSeen = Date.now()
-      markDangerZone(warden.position)
-      if (mode !== 'warden') {
-        if (running) running = false
-        setMode('warden', 'Warden! Przerywam zadanie i uciekam.')
-      }
-      bot.pvp.stop()
-      bot.setControlState('sprint', true)
-      // cel ustawiamy, gdy go nie ma (konczace sie zadanie go kasuje) albo gdy doszlismy do wyjscia, a warden nadal blisko
-      const nearExit = mineEntrance && mineEntrance.distanceTo(bot.entity.position) < 3
-      if (!bot.pathfinder.goal || (nearExit && !(bot.pathfinder.goal instanceof goals.GoalInvert))) {
-        bot.pathfinder.setGoal(mineEntrance && !nearExit
-          ? new goals.GoalNear(mineEntrance.x, mineEntrance.y, mineEntrance.z, 1)
-          : new goals.GoalInvert(new goals.GoalFollow(warden, 48)), true)
-      }
-      return
-    }
-    if (mode === 'warden') {
-      // warden znika z oczu; czekamy chwile, czy nie wroci, i dopiero wtedy sie uspokajamy
-      if (Date.now() - lastWardenSeen > 15000) {
-        bot.pathfinder.setGoal(null)
-        bot.setControlState('sprint', false)
-        setMode('normal')
-        say('Ucieklem przed wardenem. To miejsce bede omijal przy kopaniu.')
-      }
-      return
-    }
+    if (warden) { escapeWarden(); return }
 
     // 4. zagrozenie od pozostalych mobow
     const near = threats(running ? 12 : 6)
