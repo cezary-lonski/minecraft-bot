@@ -12,6 +12,9 @@ Wchodzi do gry jako osobny gracz i wykonuje polecenia wydawane **po polsku na cz
 - dba o siebie: je, ucieka z lawy i przed wardenem, walczy albo ucieka przed mobami, odblokowuje się,
 - obsługuje tryb kreatywny (bierze bloki z menu i lata przy budowie),
 - rozmawia: odpowiada na „elo", „co tam", „dzięki"…
+- **kilka botów naraz** — pomagają sobie w budowie, wystroju, burzeniu i walce, wymieniają się przedmiotami,
+- ma **program z oknem (centrum sterowania)**: lista botów, panel ze stanem i ekwipunkiem, czat z podpowiedziami komend,
+  przyciski budowli i automatyczne aktualizacje.
 
 > **Wersja beta.** Bot działa, ale bywa zawodny. Błędy zgłaszaj w [Issues](https://github.com/cezary-lonski/minecraft-bot/issues),
 > najlepiej z kawałkiem logu z konsoli. Testowany na Minecraft **1.21.11** w świecie LAN.
@@ -19,8 +22,9 @@ Wchodzi do gry jako osobny gracz i wykonuje polecenia wydawane **po polsku na cz
 ---
 
 ## Spis treści
-- [Wymagania](#wymagania)
-- [Instalacja](#instalacja)
+- [Najprościej: program dla Windows](#najprościej-program-dla-windows)
+- [Kilka botów naraz](#kilka-botów-naraz)
+- [Wersja konsolowa (Node.js)](#wersja-konsolowa-nodejs)
 - [Uruchomienie](#uruchomienie)
 - [Jak wydawać komendy](#jak-wydawać-komendy)
 - [Jak zmienić nick bota](#jak-zmienić-nick-bota)
@@ -33,12 +37,39 @@ Wchodzi do gry jako osobny gracz i wykonuje polecenia wydawane **po polsku na cz
 
 ---
 
-## Wymagania
+## Najprościej: program dla Windows
+Nie trzeba instalować Node.js ani niczego wpisywać w PowerShellu — instalator ma w sobie wszystkie biblioteki.
+
+1. Wejdź w [Releases](https://github.com/cezary-lonski/minecraft-bot/releases) i pobierz najnowszy plik
+   **`Minecraft-Bot-Setup-….exe`**.
+2. Uruchom go. Windows może pokazać „System Windows ochronił ten komputer" (program nie ma płatnego podpisu) —
+   kliknij **Więcej informacji → Uruchom mimo to**. Instalacja trwa kilka sekund, a na Pulpicie pojawi się skrót **Minecraft Bot**.
+3. W Minecrafcie otwórz świat na LAN (**Esc → Open to LAN → Start LAN World**) i zapamiętaj port z czatu.
+4. W programie: **Graj → Nowy bot** — wpisz nick bota, port LAN i swój nick w grze, kliknij **Zapisz i graj**.
+5. Bot wchodzi do gry. Komendy wpisujesz na czacie gry albo w okienku **Czat i log** w programie (Tab podpowiada komendy).
+
+Kolejnym razem: **Graj → dwuklik na bota**. Program sam sprawdza aktualizacje na GitHubie i instaluje je przy zamknięciu
+(można to wyłączyć w zakładce **Aktualizacje**). Ustawienia i pamięć botów są w `%APPDATA%\Minecraft Bot`.
+
+## Kilka botów naraz
+W zakładce **Graj** każdy bot ma własną kartę i własną pamięć świata: bazę, punkty, postawione budowle i przerwane zadanie
+(po ponownym uruchomieniu zapyta, czy kontynuować). Możesz uruchomić kilka botów jednocześnie — przełączasz się między nimi
+zakładkami w **Panelu bota**. Boty uruchomione z programu tworzą **zespół**:
+
+- **Pomoc w pracy:** gdy jeden bot buduje (`buduj zamek`), wystraja, burzy albo walczy, drugi może dołączyć — komenda
+  `pomóż` (albo `pomóż <bot>`) lub przycisk w karcie **Zespół**. Przy budowie pomocnik bierze prawą połowę budowli.
+- **Same proszą o pomoc:** bot z dużą pracą albo w trudnej walce woła pozostałe; przychodzi ten, który akurat nic nie robi
+  (do wyłączenia w ustawieniach bota: „Sam pomaga innym botom").
+- **Wymiana przedmiotów:** boty widzą nawzajem swoje ekwipunki. Gdy budującemu brakuje materiału, najpierw prosi kolegę,
+  a dopiero potem idzie zbierać. Ręcznie: `poproś <bot> o <co> [ile]` — tamten przyniesie i wyrzuci przedmioty.
+
+## Wersja konsolowa (Node.js)
+Dla innych systemów albo gdy wolisz konsolę.
+
+### Wymagania
 - [Node.js](https://nodejs.org/) w wersji **18 lub nowszej** (sprawdzisz: `node -v`),
 - Minecraft Java Edition — świat singleplayer otwarty na LAN albo serwer,
 - Git (do pobrania) albo pobrany ZIP z GitHuba (**Code → Download ZIP**).
-
-## Instalacja
 
 ### Krok po kroku (Windows)
 1. **Zainstaluj Node.js:** wejdź na [nodejs.org](https://nodejs.org/), pobierz wersję **LTS** i zainstaluj (wszystko „Dalej").
@@ -173,6 +204,15 @@ miska, butelka, łódka, wózek, tory, książka, papier, cukier, dźwignia, prz
 | `chodź za mną`, `chodź za <gracz>` | chodzi za graczem aż do `stop` |
 | `ochraniaj [gracz]` (`pilnuj`) | chodzi za graczem i bije moby obok niego |
 | `zabij <gracz>` | atakuje gracza — **tylko za jego zgodą** |
+| `zabij <mob>` | zabija najbliższego moba tego typu, np. `zabij zombie`, `zabij krowa` |
+| `zabij <imię>` | zabija moba nazwanego plakietką, np. `zabij Burek` |
+
+### Zespół (kilka botów)
+| Komenda | Działanie |
+|---|---|
+| `pomóż` | dołącza do pracy innego bota: budowy, wystroju, burzenia albo walki |
+| `pomóż <bot>` | pomaga konkretnemu botowi |
+| `poproś <bot> o <co> [ile]` | prosi innego bota o przedmioty — przyniesie je i wyrzuci |
 
 ### Baza i punkty
 | Komenda | Działanie |
@@ -261,6 +301,7 @@ albo przy pałacu Endu **na najwyższym end rodzie środkowej iglicy** — a sam
 - **Odblokowywanie:** wbity w blok — wykopuje się; zaklinowany — podskakuje i szuka nowej drogi; na drabinie — wspina się.
 - **Pełny ekwipunek:** wyrzuca śmieci, ale nigdy materiałów aktualnej budowy.
 - **Rusztowania:** po budowie proponuje ich rozebranie.
+- **Znacznik startu:** w miejscu, z którego zaczął budowę, stawia czerwony blok — stań na nim botem przy `wystrój` i `zburz`.
 
 ## Tryb kreatywny
 Gdy bot jest w kreatywnym (`/gamemode creative <nick bota>`), nie zbiera surowców — bierze bloki i przedmioty z menu

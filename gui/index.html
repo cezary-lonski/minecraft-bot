@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <title>Minecraft Bot – centrum sterowania</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <img class="logo" src="icon.png" alt="">
+      <div>
+        <div class="brand-name">Minecraft Bot</div>
+        <div class="brand-sub">centrum sterowania</div>
+      </div>
+    </div>
+    <nav>
+      <button class="nav active" data-view="play">🎮 Graj</button>
+      <button class="nav" data-view="panel">🏠 Panel bota</button>
+      <button class="nav" data-view="build">🏰 Budowanie</button>
+      <button class="nav" data-view="commands">📜 Komendy</button>
+      <button class="nav" data-view="updates">⬆ Aktualizacje <span id="updDot" class="dot hidden"></span></button>
+    </nav>
+    <div class="running-box">
+      <div class="muted small-title">Uruchomione boty</div>
+      <div id="runningList" class="running-list"><span class="muted">żaden</span></div>
+    </div>
+    <div class="side-foot">
+      <div id="version" class="muted">wersja ?</div>
+      <a href="https://github.com/cezary-lonski/minecraft-bot" target="_blank">GitHub ↗</a>
+    </div>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="conn"><span id="connDot" class="dot off"></span><span id="connText">Wybierz bota</span></div>
+      <div id="taskText" class="task muted"></div>
+      <div class="top-actions">
+        <button id="btnStop" class="btn warn small" title="Przerywa bieżące zadanie wybranego bota">■ Stop zadania</button>
+        <button id="btnStart" class="btn primary">▶ Uruchom</button>
+      </div>
+    </header>
+
+    <!-- GRAJ -->
+    <section class="view active" id="view-play">
+      <div class="play-head">
+        <div>
+          <h2>Twoje boty</h2>
+          <p class="muted">Kliknij dwa razy, żeby uruchomić bota i przejść do jego panelu. Każdy bot pamięta swój świat:
+            bazę, punkty, budowle i ostatnie zadanie. Możesz uruchomić kilka naraz – będą sobie pomagać.</p>
+        </div>
+        <button id="btnStopAll" class="btn ghost hidden">⏹ Zatrzymaj wszystkie</button>
+      </div>
+      <div id="botGrid" class="bot-grid"></div>
+    </section>
+
+    <!-- PANEL -->
+    <section class="view" id="view-panel">
+      <div id="botTabs" class="bot-tabs"></div>
+      <div class="grid">
+        <div class="card stats">
+          <h3>Stan bota</h3>
+          <div class="bars">
+            <div class="bar-row"><span>❤ Zdrowie</span><div class="bar"><div id="hpBar" class="fill hp"></div></div><b id="hpVal">-</b></div>
+            <div class="bar-row"><span>🍗 Głód</span><div class="bar"><div id="foodBar" class="fill food"></div></div><b id="foodVal">-</b></div>
+          </div>
+          <dl class="kv">
+            <dt>Pozycja</dt><dd id="posVal">-</dd>
+            <dt>Wymiar</dt><dd id="dimVal">-</dd>
+            <dt>Tryb gry</dt><dd id="gmVal">-</dd>
+            <dt>W ręce</dt><dd id="heldVal">-</dd>
+            <dt>Zbroja</dt><dd id="armorVal">-</dd>
+            <dt>Krok zadania</dt><dd id="stepVal">-</dd>
+          </dl>
+        </div>
+
+        <div class="card quick">
+          <h3>Szybkie akcje</h3>
+          <div class="quick-grid" id="quickGrid"></div>
+          <p class="hint" id="playerHint"></p>
+        </div>
+
+        <div class="card team">
+          <h3>🤝 Zespół</h3>
+          <div id="teamList" class="team-list"><span class="muted">Uruchom drugiego bota, żeby mogły współpracować.</span></div>
+        </div>
+
+        <div class="card inv">
+          <h3>Ekwipunek <span id="invCount" class="muted"></span></h3>
+          <div id="invList" class="inv-list"><span class="muted">Bot nie jest w grze.</span></div>
+        </div>
+
+        <div class="card log-card">
+          <div class="log-head">
+            <h3>Czat i log</h3>
+            <div class="filters">
+              <label><input type="checkbox" data-kind="server" checked> serwer</label>
+              <label><input type="checkbox" data-kind="bot" checked> bot</label>
+              <label><input type="checkbox" data-kind="team" checked> zespół</label>
+              <label><input type="checkbox" data-kind="info"> techniczne</label>
+              <button id="btnClear" class="btn ghost small">Wyczyść</button>
+            </div>
+          </div>
+          <div id="log" class="log"></div>
+          <div class="cmd-wrap">
+            <div id="suggest" class="suggest hidden"></div>
+            <input id="cmdInput" class="cmd" placeholder="Wpisz komendę, np. zdobądź diament 3   (Tab – podpowiedź, ↑↓ – historia)" autocomplete="off" spellcheck="false">
+            <button id="btnSend" class="btn primary">Wyślij</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- BUDOWANIE -->
+    <section class="view" id="view-build">
+      <p class="lead">Polecenia trafiają do bota <b id="buildBotName">-</b>. Bot buduje <b>przed sobą</b> — w grze ustaw go przodem tam,
+        gdzie ma stanąć budowla. Materiały zbiera sam (w kreatywnym bierze je z menu). Po budowie zostawia <b>czerwony znacznik</b>
+        w miejscu startu — stań na nim botem przy „Wystrój” i „Zburz”. Jeśli działa drugi bot, sam przyjdzie pomóc.</p>
+      <div class="build-grid" id="buildGrid"></div>
+
+      <div class="card">
+        <h3>✍ Napis z bloków</h3>
+        <div class="row">
+          <input id="signText" placeholder="Tekst (do 30 znaków), np. kurczak" maxlength="30">
+          <select id="signMat">
+            <option value="">bruk</option><option value="desek">deski</option><option value="kamienia">kamień</option>
+            <option value="ziemi">ziemia</option><option value="obsydianu">obsydian</option>
+          </select>
+          <button class="btn primary" id="btnSign">Buduj napis</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>🌾 Farmy</h3>
+        <div class="chips" id="farmChips"></div>
+      </div>
+
+      <div class="card">
+        <h3>🧹 Porządki</h3>
+        <div class="chips">
+          <button class="chip" data-cmd="rozbierz rusztowania">Rozbierz rusztowania</button>
+          <button class="chip" data-cmd="podnies">Pozbieraj przedmioty</button>
+          <button class="chip" data-cmd="wyrzuc smieci">Wyrzuć śmieci</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- KOMENDY -->
+    <section class="view" id="view-commands">
+      <input id="cmdSearch" class="search" placeholder="Szukaj komendy, np. kilof, baza, jedzenie, pomoc…">
+      <div id="cmdList" class="cmd-list"></div>
+    </section>
+
+    <!-- AKTUALIZACJE -->
+    <section class="view" id="view-updates">
+      <div class="card">
+        <h3>Aktualizacje</h3>
+        <p>Zainstalowana wersja: <b id="verBig">?</b></p>
+        <p id="updText" class="muted">Sprawdzam…</p>
+        <div class="progress hidden" id="updProg"><div id="updFill"></div></div>
+        <div class="actions">
+          <button id="btnCheck" class="btn">🔄 Sprawdź teraz</button>
+          <button id="btnInstall" class="btn primary hidden">⬆ Zainstaluj i uruchom ponownie</button>
+          <label class="check"><input type="checkbox" id="autoUpdate"> Automatyczne aktualizacje</label>
+        </div>
+        <p class="hint">Program sam sprawdza nowe wersje na GitHubie co 30 minut i pobiera je w tle. Nowa wersja instaluje się
+          po kliknięciu „Zainstaluj” albo przy zamknięciu programu.</p>
+      </div>
+      <div class="card">
+        <h3>Dane</h3>
+        <p class="muted">Ustawienia i pamięć botów (bazy, punkty, budowle) są w folderze programu.</p>
+        <button id="btnData" class="btn ghost">📂 Otwórz folder z danymi</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- okno edycji bota -->
+  <div id="modal" class="modal hidden">
+    <form id="botForm" class="modal-box">
+      <h2 id="modalTitle">Nowy bot</h2>
+      <input type="hidden" name="id">
+      <div class="seg" id="modeSeg">
+        <button type="button" data-mode="lan" class="seg-btn">🖥 Świat LAN (singleplayer)</button>
+        <button type="button" data-mode="serwer" class="seg-btn">🌐 Serwer</button>
+      </div>
+      <div class="fields">
+        <label>Nick bota<input name="name" placeholder="np. Claude" required></label>
+        <label class="lan-only">Port LAN<input name="port" placeholder="np. 12345 (z czatu po Open to LAN)"></label>
+        <label class="srv-only">Adres serwera<input name="host" placeholder="mc.example.com albo mc.example.com:25565"></label>
+        <label>Twój nick w grze<input name="player" placeholder="do: tu / chodź za mną / daj"></label>
+        <label class="srv-only">Właściciel (kto wydaje komendy)<input name="owner" placeholder="twój nick"></label>
+        <label class="srv-only">Hasło do /login<input name="password" type="password" placeholder="opcjonalne (AuthMe)"></label>
+        <label>Wersja gry<input name="version" placeholder="puste = wykryj samo"></label>
+        <label>Przeszukiwanie skrzyń
+          <select name="loot"><option value="auto">automatycznie (LAN tak, serwer nie)</option><option value="on">zawsze</option><option value="off">nigdy</option></select>
+        </label>
+        <label>Jedz, gdy głód/zdrowie poniżej<input name="eatBelow" type="number" min="2" max="20"></label>
+        <label>Odstęp między wiadomościami (ms)<input name="chatDelay" placeholder="puste = domyślnie"></label>
+        <label class="check"><input name="autoHelp" type="checkbox"> Sam pomaga innym botom</label>
+        <label class="check srv-only"><input name="rtp" type="checkbox"> Używaj /rtp, gdy brak surowca</label>
+      </div>
+      <p class="hint lan-only">W grze: Esc → Open to LAN → Start LAN World. Port pojawi się na czacie (przy każdym otwarciu może być inny).</p>
+      <div class="actions">
+        <button type="submit" class="btn primary">💾 Zapisz</button>
+        <button type="button" id="btnSavePlay" class="btn">Zapisz i graj</button>
+        <button type="button" id="btnCancel" class="btn ghost">Anuluj</button>
+        <span id="formMsg" class="err-text"></span>
+      </div>
+    </form>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -106,6 +106,7 @@ async function task(name, fn) {
   running = true
   currentTask = name
   activeTasks++
+  rememberTask(name)
   try {
     await fn()
   } catch (e) {
@@ -117,6 +118,8 @@ async function task(name, fn) {
     currentTask = null
     taskGoal = null
     taskStatus = null
+    currentJob = null
+    forgetTask() // zadanie skonczone albo przerwane przez "stop" - nie ma czego wznawiac
     try { bot.pathfinder.setGoal(null); bot.clearControlStates() } catch {}
   }
 }
@@ -770,6 +773,7 @@ async function survivalTick() {
     const lowHp = bot.health <= 6
 
     if (mustFlee || lowHp || threat > power) {
+      if (!mustFlee || closest.name !== 'warden') askForFightHelp()
       setMode('flee', lowHp ? 'Malo zycia, uciekam!' : 'Za grozne, uciekam!')
       bot.pvp.stop()
       bot.setControlState('sprint', true)
@@ -780,6 +784,7 @@ async function survivalTick() {
 
     // walka: tylko gdy jestesmy silniejsi
     if (dist < (running ? 10 : 5)) {
+      if (threat >= 4) askForFightHelp()
       setMode('fight')
       await bestSword()
       if (!bot.pvp.target) bot.pvp.attack(closest)
@@ -1222,6 +1227,7 @@ const HELP = [
   'Budowa: wystroj <budowla>, zburz <budowla>, rozbierz rusztowania, buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
+  'Zespol: pomoz [bot], popros <bot> o <co> [ile], zabij <gracz|mob|imie>',
   'Inne: status, co robisz, diag, chat <tekst>, permisja <nick>, odbierz <nick>, permisje'
 ]
 
@@ -2042,6 +2048,8 @@ async function gatherMaterials(cells, label) {
     if (!running) return false
     if (haveOf(name) >= need[name]) continue
     setStatus(`zbieram material na ${label}: ${name} (mam ${haveOf(name)}/${need[name]})`)
+    await askTeamFor(name, need[name] - haveOf(name)) // moze kolega ma - przyniesie
+    if (haveOf(name) >= need[name]) continue
     const ok = WOOD_RE.test(name) ? await collect(woodBlocks(), need[name], WOOD_RE) : await obtain(name, need[name])
     if (!ok && running) { say(`Nie dam rady zbudowac ${label}. Brakuje mi: ${missingText()}.`); return false }
   }
@@ -2185,8 +2193,13 @@ async function placeStartMarker(feet) {
 
 async function buildPlan(label, plan, origin, front, opts = {}) {
   const startFeet = bot.entity.position.floored() // tu stoi bot, gdy zaczyna budowe
-  if (opts.type && !opts.decor) recordBuild(opts.type, origin, front)
-  const cells = plan.map(c => ({ ...c, pos: toWorld(origin, front, c.x, c.y, c.z) }))
+  if (opts.type && !opts.decor && !opts.helper) recordBuild(opts.type, origin, front)
+  // pomocnik robi prawa polowe (x >= 0); lider robi calosc i pomija to, co juz stoi
+  const cells = plan.filter(c => opts.part !== 'right' || c.x >= 0).map(c => ({ ...c, pos: toWorld(origin, front, c.x, c.y, c.z) }))
+  if (opts.type && !opts.helper) {
+    currentJob = { kind: opts.decor ? 'decor' : 'build', type: opts.type, label, origin: { x: origin.x, y: origin.y, z: origin.z }, front }
+    if (cells.filter(c => c.block !== 'air').length > 40) askForHelp(currentJob)
+  }
   for (const c of cells) if (c.temp) c.block = 'dirt' // tymczasowe podpory (np. pod kropka nad "i"), na koncu znikaja
   const solidCells = cells.filter(c => c.block !== 'air')
   const batched = solidCells.length > BATCH_LIMIT
@@ -2288,7 +2301,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
 
     // 3) rusztowania: pathfinder, zeby siegnac wysoko, stawia slupki z ziemi/bruku i ich nie rozbiera.
     //    Wszystko z tych blokow, co stoi w obrysie budowli (+1 blok dookola) od poziomu gruntu w gore, a nie nalezy do planu - kopiemy.
-    if (running && !opts.decor) {
+    if (running && !opts.decor && !opts.helper) {
       bot.pathfinder.setMovements(normalMoves)
       const scaffold = findScaffolding(cells, origin.y)
       if (scaffold.length) {
@@ -2315,7 +2328,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
         try { await goNearCell(c.pos); await clearBlock(c.pos) } catch {}
       }
     }
-    if (running && opts.type && !opts.decor) await placeStartMarker(startFeet)
+    if (running && opts.type && !opts.decor && !opts.helper) await placeStartMarker(startFeet)
     if (running) say(failed ? `${label} gotowe, ale ${failed} blokow nie udalo sie postawic.` : `${label} gotowe!`)
     return true
   } finally {
@@ -2885,6 +2898,34 @@ function whereIsBuild(bt, here, verb) {
 
 // "zburz <budowla>" / "usun budowle <budowla>": rozbiera wszystko, co nalezy do budowli (plan + wystroj),
 // od gory; nie rusza terenu dookola. Najpierw pyta, czy na pewno.
+// rozbiera bloki budowli (plan + wystroj) od gory; part 'right' - tylko prawa polowa (pomocnik)
+async function demolishCells(type, loc, part) {
+  const cells = [...PLAN_FOR_TYPE[type](), ...(decorPlan(type) || [])].filter(c => c.block !== 'air' && (part !== 'right' || c.x >= 0))
+  const targets = new Map()
+  for (const c of cells) {
+    const pos = toWorld(loc.origin, loc.front, c.x, c.y, c.z)
+    const blk = bot.blockAt(pos)
+    // tylko to, co pasuje do planu (np. bruk w miejscu muru) - trawy i ziemi dookola nie ruszamy
+    if (blk && blk.name !== 'air' && (sameKind(blk.name, c.block) || /_(bed|door)$/.test(blk.name))) targets.set(posKey(pos), pos)
+  }
+  const list = [...targets.values()].sort((x, y) => y.y - x.y)
+  say(`Burze ${type}${part ? ' (polowa)' : ''}: ${list.length} blokow.`)
+  let removed = 0
+  for (const p of list) {
+    if (!running) break
+    setStatus(`burze ${type}: ${removed}/${list.length}`)
+    const blk = bot.blockAt(p)
+    if (!blk || blk.name === 'air' || !bot.canDigBlock(blk)) continue
+    try {
+      await goNearCell(p)
+      try { await bot.tool.equipForBlock(blk, {}) } catch {}
+      await bot.dig(blk, true)
+      removed++
+    } catch (e) { console.log('[bot] burzenie:', e.message) }
+  }
+  return removed
+}
+
 function demolishCommand(text) {
   const t = stripPl(text).trim().replace(/^budowl\w*\s*/, '')
   const here = /\btutaj|\btu$/.test(t)
@@ -2896,29 +2937,9 @@ function demolishCommand(text) {
     const answer = await askUser(`Na pewno zburzyc ${bt.type}? Wszystko z niego zniknie. (tak / nie)`,
       [[/^(tak|zburz|dawaj|na pewno)$/, 'yes'], [/^(nie|stop|zostaw)$/, 'no']], 60000, 'no', 'Brak odpowiedzi - nic nie burze.')
     if (answer !== 'yes' || !running) { if (running) say('Dobra, zostawiam.'); return }
-    const cells = [...PLAN_FOR_TYPE[bt.type](), ...(decorPlan(bt.type) || [])].filter(c => c.block !== 'air')
-    const targets = new Map()
-    for (const c of cells) {
-      const pos = toWorld(loc.origin, loc.front, c.x, c.y, c.z)
-      const blk = bot.blockAt(pos)
-      // tylko to, co pasuje do planu (np. bruk w miejscu muru) - trawy i ziemi dookola nie ruszamy
-      if (blk && blk.name !== 'air' && (sameKind(blk.name, c.block) || /_(bed|door)$/.test(blk.name))) targets.set(posKey(pos), pos)
-    }
-    const list = [...targets.values()].sort((a, b) => b.y - a.y)
-    say(`Burze ${bt.type}: ${list.length} blokow.`)
-    let removed = 0
-    for (const p of list) {
-      if (!running) break
-      setStatus(`burze ${bt.type}: ${removed}/${list.length}`)
-      const blk = bot.blockAt(p)
-      if (!blk || blk.name === 'air' || !bot.canDigBlock(blk)) continue
-      try {
-        await goNearCell(p)
-        try { await bot.tool.equipForBlock(blk, {}) } catch {}
-        await bot.dig(blk, true)
-        removed++
-      } catch (e) { console.log('[bot] burzenie:', e.message) }
-    }
+    currentJob = { kind: 'demolish', type: bt.type, label: bt.type, origin: { x: loc.origin.x, y: loc.origin.y, z: loc.origin.z }, front: loc.front }
+    askForHelp(currentJob)
+    const removed = await demolishCells(bt.type, loc)
     if (running) {
       say(`Zburzylem ${bt.type} (${removed} blokow).`)
       for (let i = builds.length - 1; i >= 0; i--) if (builds[i].type === bt.type && builds[i].origin.x === loc.origin.x && builds[i].origin.z === loc.origin.z) builds.splice(i, 1)
@@ -2938,7 +2959,7 @@ function decorCommand(text) {
   const { origin, front } = loc
   const plan = decorPlan(bt.type)
   if (!plan) { say(`Nie mam pomyslu na wystroj: ${bt.type}.`); return }
-  return task(`wystroj: ${bt.type}`, () => buildPlan(`wystroj (${bt.type})`, plan, origin, front, { decor: true, passes: 3 }))
+  return task(`wystroj: ${bt.type}`, () => buildPlan(`wystroj (${bt.type})`, plan, origin, front, { decor: true, passes: 3, type: bt.type }))
 }
 
 // ---------- slup do nieba ----------
@@ -3659,6 +3680,230 @@ function huntCommand(args) {
   })
 }
 
+// ---------- zespol botow (kilka botow uruchomionych z jednego centrum sterowania) ----------
+// Boty rozmawiaja przez centrum sterowania: linia "@@TEAM {json}" na wyjsciu trafia do pozostalych botow na wejscie.
+// Kazdy co 2 s rozsyla swoj stan (ekwipunek, pozycja, zadanie), prosi o pomoc przy duzych zadaniach i walce,
+// a gdy brakuje mu materialu, prosi kolege, ktory go ma.
+const TEAM = process.env.MC_GUI === '1'
+const AUTO_HELP = process.env.MC_AUTO_HELP !== '0'
+const team = new Map() // nick -> ostatni stan
+let currentJob = null // biezaca praca, do ktorej moga dolaczyc inni: { kind, type, label, origin, front }
+
+function teamSend(msg) {
+  if (!TEAM || !bot.username) return
+  process.stdout.write('@@TEAM ' + JSON.stringify({ ...msg, from: bot.username }) + '\n')
+}
+
+// koledzy, ktorzy sa na tym samym swiecie i odezwali sie w ostatnich 10 s
+function teammates() {
+  const now = Date.now()
+  return [...team.values()].filter(t => now - t.at < 10000 && (!t.dim || !bot.game?.dimension || t.dim === bot.game.dimension))
+}
+
+setInterval(() => {
+  if (!TEAM || !bot.entity || !mcData) return
+  const inv = {}
+  for (const it of bot.inventory.items()) inv[it.name] = (inv[it.name] || 0) + it.count
+  const p = bot.entity.position
+  teamSend({ type: 'state', inv, pos: { x: p.x, y: p.y, z: p.z }, dim: bot.game?.dimension, task: currentTask, job: currentJob, busy: running || activeTasks > 0 })
+}, 2000)
+
+// prosba o pomoc w biezacej pracy (budowa, wystroj, burzenie) - odpowiada pierwszy wolny kolega
+function askForHelp(job) {
+  if (!TEAM || !teammates().some(t => !t.busy)) return
+  teamSend({ type: 'help', job })
+}
+
+// walka: prosimy o pomoc najwyzej raz na 30 s
+let lastFightHelp = 0
+function askForFightHelp() {
+  if (!TEAM || Date.now() - lastFightHelp < 30000) return
+  lastFightHelp = Date.now()
+  askForHelp({ kind: 'fight' })
+}
+
+function handleTeam(msg) {
+  if (!msg || msg.from === bot.username) return
+  if (msg.type === 'state') { team.set(msg.from, { ...msg, at: Date.now() }); return }
+  if (msg.to && msg.to !== bot.username) return
+  if (msg.type === 'help') {
+    if (!AUTO_HELP || running || activeTasks > 0 || !mcData) return
+    replyTo = null
+    joinJob(msg.from, msg.job, true)
+    return
+  }
+  if (msg.type === 'request') { answerRequest(msg); return }
+  if (msg.type === 'reply') { console.log(`[bot] ${msg.from}: ${msg.text}`); return }
+  if (msg.type === 'say') { console.log(`[bot] ${msg.from}: ${msg.text}`) }
+}
+
+// dolaczenie do pracy kolegi: bot bierze polowe planu (prawa strona), kolega i tak pomija juz postawione bloki
+function joinJob(name, job, auto) {
+  if (!job) {
+    // kolega nic duzego nie robi - chodzimy za nim i bronimy go
+    return task(`pomagam ${name}`, () => guardFor(name, 60000))
+  }
+  const tag = auto ? `${name} prosi o pomoc - ` : ''
+  if (job.kind === 'fight') {
+    say(`${tag}ide pomoc ${name} w walce.`)
+    return task(`pomoc w walce: ${name}`, () => guardFor(name, 60000))
+  }
+  const origin = new Vec3(job.origin.x, job.origin.y, job.origin.z)
+  if (job.kind === 'build' && PLAN_FOR_TYPE[job.type]) {
+    say(`${tag}pomagam ${name} budowac: ${job.type}.`)
+    return task(`pomoc w budowie (${job.type})`, () =>
+      buildPlan(`${job.type} (pomoc)`, planWithLadders(job.type, PLAN_FOR_TYPE[job.type]()), origin, job.front,
+        { type: job.type, helper: true, part: 'right', passes: job.type === 'palac endu' ? 6 : 4 }))
+  }
+  if (job.kind === 'decor' && decorPlan(job.type)) {
+    say(`${tag}pomagam ${name} w wystroju: ${job.type}.`)
+    return task(`pomoc w wystroju (${job.type})`, () =>
+      buildPlan(`wystroj ${job.type} (pomoc)`, decorPlan(job.type), origin, job.front, { type: job.type, decor: true, helper: true, part: 'right', passes: 3 }))
+  }
+  if (job.kind === 'demolish' && PLAN_FOR_TYPE[job.type]) {
+    say(`${tag}pomagam ${name} burzyc: ${job.type}.`)
+    return task(`pomoc w burzeniu (${job.type})`, () => demolishCells(job.type, { origin, front: job.front }, 'right'))
+  }
+  return task(`pomagam ${name}`, () => guardFor(name, 60000))
+}
+
+// chodzi za kolega i bije moby obok niego przez podany czas (albo do "stop")
+async function guardFor(name, ms) {
+  const until = Date.now() + ms
+  const stop = setInterval(() => { if (Date.now() > until) running = false }, 1000)
+  try { await stayWithPlayer(name, true) } finally { clearInterval(stop) }
+}
+
+// "pomoz" / "pomoz <bot>": dolaczamy do pracy kolegi (albo tego, ktory cos robi)
+function helpCommand(arg) {
+  const mates = teammates()
+  if (!TEAM) { say('Pomaganie dziala, gdy boty sa uruchomione z centrum sterowania.'); return }
+  if (!mates.length) { say('Nie widze innych botow.'); return }
+  const name = arg && mates.find(t => t.from.toLowerCase().startsWith(arg.toLowerCase()))?.from
+  const target = name ? mates.find(t => t.from === name) : (mates.find(t => t.job) || mates.find(t => t.busy) || mates[0])
+  return joinJob(target.from, target.job, false)
+}
+
+// ---------- wymiana przedmiotow ----------
+// nazwa do "daj": deski i pnie dowolnego drewna
+const giveWord = item => /_planks$/.test(item) ? 'deski' : WOOD_RE.test(item) ? 'kloce' : item
+const teamHas = (t, item) => Object.entries(t.inv || {}).filter(([n]) => sameKind(n, item)).reduce((s, [, c]) => s + c, 0)
+
+// prosi kolege, ktory ma przedmiot, zeby go przyniosl; czeka do 45 s
+async function askTeamFor(item, count, who) {
+  if (!TEAM || count <= 0) return false
+  const mates = teammates().filter(t => (!who || t.from === who) && teamHas(t, item) > 0 && !t.busy)
+  if (!mates.length) return false
+  const giver = mates.sort((a, b) => teamHas(b, item) - teamHas(a, item))[0]
+  const want = Math.min(count, teamHas(giver, item))
+  const before = haveOf(item)
+  say(`Brakuje mi ${count} x ${item} - prosze ${giver.from}, ma ${teamHas(giver, item)}.`)
+  teamSend({ type: 'request', to: giver.from, item, count: want })
+  for (let i = 0; i < 45 && running; i++) {
+    await sleep(1000)
+    if (haveOf(item) >= before + want) break
+  }
+  await pickUpItems(6)
+  return haveOf(item) > before
+}
+
+function answerRequest(msg) {
+  const reply = text => teamSend({ type: 'reply', to: msg.from, text })
+  if (running || activeTasks > 0) { reply(`jestem zajety (${currentTask})`); return }
+  if (!bot.players[msg.from]?.entity) { reply('nie widze Cie - podejdz blizej'); return }
+  say(`${msg.from} prosi o ${msg.count} x ${msg.item} - zanosze.`)
+  task(`daje ${msg.item} dla ${msg.from}`, () => giveItems(msg.from, giveWord(msg.item), msg.count))
+}
+
+// "popros <bot> o <co> [ile]"
+function requestCommand(text) {
+  const m = stripPl(text).match(/^(\S+)\s+o\s+(.+?)(?:\s+(\d+))?$/)
+  if (!m) { say('Uzycie: popros <bot> o <co> [ile], np. popros Bob o diament 3'); return }
+  const who = teammates().find(t => t.from.toLowerCase().startsWith(m[1]))?.from
+  if (!who) { say(`Nie widze bota ${m[1]}.`); return }
+  const re = resolveGive(m[2])
+  const t = team.get(who)
+  const item = Object.keys(t.inv || {}).find(n => re.test(n))
+  if (!item) { say(`${who} nie ma: ${m[2]}.`); return }
+  return task(`prosba do ${who}`, () => askTeamFor(item, parseInt(m[3] || '1'), who))
+}
+
+// ---------- zabij: gracz, mob (typ) albo mob z imieniem ----------
+const MOB_PL = [['zombi', 'zombie'], ['szkielet', 'skeleton'], ['pajak', 'spider'], ['creeper', 'creeper'], ['enderman', 'enderman'],
+  ['wiedzm', 'witch'], ['krow', 'cow'], ['swin', 'pig'], ['owc', 'sheep'], ['kur', 'chicken'], ['krolik', 'rabbit'], ['koz', 'goat'],
+  ['kon', 'horse'], ['wilk', 'wolf'], ['slime', 'slime'], ['szlam', 'slime'], ['blaze', 'blaze'], ['ghast', 'ghast'], ['piglin', 'piglin'],
+  ['topiel', 'drowned'], ['husk', 'husk'], ['fantom', 'phantom'], ['phantom', 'phantom'], ['pillager', 'pillager'], ['rozboj', 'pillager'],
+  ['lis', 'fox'], ['kot', 'cat'], ['lama', 'llama'], ['osiol', 'donkey'], ['muchomor', 'mooshroom'], ['silverfish', 'silverfish'], ['rybik', 'silverfish']]
+
+// imie nadane mobowi (tabliczka z imieniem) - w metadanych bytu jako tekst albo JSON czatu
+function customName(e) {
+  for (const v of Object.values(e.metadata || {})) {
+    if (typeof v === 'string' && v.length < 64 && !/^[\d.]+$/.test(v)) return v.replace(/"|\{.*"text":"|\}/g, '')
+    if (v && typeof v === 'object' && typeof v.text === 'string' && v.text) return v.text
+  }
+  return null
+}
+
+function findMob(word) {
+  const w = stripPl(word)
+  const me = bot.entity.position
+  const near = e => e !== bot.entity && e.position.distanceTo(me) < 64
+  // 1) mob z imieniem
+  const named = Object.values(bot.entities).find(e => near(e) && e.type !== 'player' && stripPl(customName(e) || '').includes(w))
+  if (named) return named
+  // 2) typ moba (po polsku albo angielsku)
+  const type = MOB_PL.find(([p]) => w.startsWith(p))?.[1] || w
+  return bot.nearestEntity(e => near(e) && e.name === type) || null
+}
+
+async function killEntity(ent, label) {
+  if (ent.name === 'warden' || ent.name === 'ender_dragon' || ent.name === 'wither') { say(`${label} jest za silny - nie atakuje.`); return }
+  let dead = false
+  const onDead = e => { if (e === ent) dead = true }
+  bot.on('entityDead', onDead)
+  try {
+    await bestSword()
+    bot.pvp.attack(ent)
+    say(`Atakuje: ${label}.`)
+    for (let t = 0; t < 240 && running && !dead && bot.entities[ent.id]; t++) {
+      if (bot.pvp.target !== ent) bot.pvp.attack(ent)
+      await sleep(500)
+    }
+    if (dead || !bot.entities[ent.id]) say(`${label} pokonany.`)
+  } finally {
+    bot.removeListener('entityDead', onDead)
+    bot.pvp.stop()
+  }
+}
+
+function killCommand(target) {
+  if (findPlayerName(target)) return killPlayer(target)
+  const ent = findMob(target)
+  if (!ent) { say(`Nie widze ani gracza, ani moba "${target}" w promieniu 64 blokow.`); return }
+  const label = customName(ent) ? `${customName(ent)} (${ent.name})` : ent.name
+  return task(`walka: ${label}`, () => killEntity(ent, label))
+}
+
+// ---------- pamiec ostatniego zadania (po restarcie bot pyta, czy kontynuowac) ----------
+let lastCommand = null // tekst komendy, ktora wlasnie uruchamia zadanie (ustawiane w handle)
+function rememberTask(name) {
+  if (!lastCommand) return
+  saveJson('last_task.json', { cmd: lastCommand, name, at: Date.now() })
+  lastCommand = null
+}
+function forgetTask() {
+  try { fs.unlinkSync(pathLib.join(DATA_DIR, 'last_task.json')) } catch {}
+}
+bot.once('spawn', () => setTimeout(async () => {
+  const last = loadJson('last_task.json', null)
+  if (!last?.cmd || running) return
+  replyTo = null
+  const answer = await askUser(`Ostatnio robilem: "${last.cmd}" (przerwane). Kontynuowac? (tak / nie)`,
+    [[/^(tak|kontynuuj|dawaj|ok)$/, 'yes'], [/^(nie|stop)$/, 'no']], 60000, 'no')
+  if (answer === 'yes') handle(null, last.cmd)
+  else forgetTask()
+}, 6000))
+
 // ---------- uprawnienia: kto moze wydawac komendy ----------
 // wlasciciel: nick gracza, ktory zawsze moze wydawac komendy (podaje sie w start.js albo zmienna MC_OWNER)
 const OWNER = process.env.MC_OWNER || ''
@@ -3713,9 +3958,20 @@ bot.on('messagestr', m => {
   }
 })
 
-process.stdin.on('data', d => handle(null, d.toString()))
+let stdinBuf = ''
+process.stdin.on('data', d => {
+  stdinBuf += d.toString()
+  const lines = stdinBuf.split(/\r?\n/)
+  stdinBuf = lines.pop()
+  for (const line of lines) {
+    if (line.startsWith('@@TEAM ')) { try { handleTeam(JSON.parse(line.slice(7))) } catch {} continue }
+    if (line.trim()) handle(null, line)
+  }
+})
 bot.on('chat', (user, msg) => {
-  if (user === bot.username || !isAllowed(user)) return
+  // inne boty z zespolu dostaja polecenia przez GUI, a nie przez czat - inaczej odpowiadalyby sobie w kolko
+  if (user === bot.username || team.has(user) || !isAllowed(user)) return
+  if (/Nie znam komendy|Napisz "komendy"/.test(msg)) return // odpowiedz innego bota, nie odbijamy jej
   handle(user, msg)
 })
 
@@ -3755,6 +4011,11 @@ function splitAmount(text) {
 }
 
 function handle(user, msg, whisper = false) {
+  lastCommand = msg.trim()
+  try { return handleCommand(user, msg, whisper) } finally { lastCommand = null }
+}
+
+function handleCommand(user, msg, whisper = false) {
   replyTo = whisper ? user : null
   const text = msg.trim()
   if (!text) return
@@ -3764,6 +4025,8 @@ function handle(user, msg, whisper = false) {
   const rest = text.split(/\s+/).slice(1).join(' ') // reszta w oryginale (nicki)
   const args = c.split(/\s+/).slice(1)
   const isOwner = isOwnerName(user)
+  // kto jest "mna" w "tu", "daj", "chodz za mna": nadawca z gry, a z konsoli/GUI - gracz z ustawien (MC_PLAYER)
+  const player = user || process.env.MC_PLAYER || null
 
   // komendy serwera (/...) wykonuje tylko konsola i wlasciciel, zeby inni nie mogli kazac botowi np. /tpa czy /op
   if (text.startsWith('/')) {
@@ -3822,16 +4085,19 @@ function handle(user, msg, whisper = false) {
 
   // --- ruch ---
   if (c === 'tu' || c === 'przyjdz' || c === 'chodz tu' || c === 'do mnie') {
-    if (!user) { say('Z konsoli nie wiem, gdzie jestes. Uzyj "idz do <gracz>".'); return }
-    return goToCommand([user])
+    if (!player) { say('Z konsoli nie wiem, gdzie jestes. Uzyj "idz do <gracz>".'); return }
+    return goToCommand([player])
   }
   const follow = c.match(/^(?:chodz|idz)\s+za\s+(\S+)$/) || c.match(/^za\s+(mna)$/)
-  if (follow) return followCommand(user, follow[1] === 'mna' ? null : rest.split(/\s+/).pop(), false)
-  if (/^(ochraniaj|chron|pilnuj)$/.test(verb)) return followCommand(user, !args[0] || args[0] === 'mnie' ? null : rest, true)
+  if (follow) return followCommand(player, follow[1] === 'mna' ? null : rest.split(/\s+/).pop(), false)
+  if (/^(ochraniaj|chron|pilnuj)$/.test(verb)) return followCommand(player, !args[0] || args[0] === 'mnie' ? null : rest, true)
   if (/^(idz|ide|chodz|ruszaj)$/.test(verb) && args[0] === 'do') return goToCommand(args.slice(1))
   if (/^(idz|ide|chodz|ruszaj)$/.test(verb)) return walkCommand(args.join(' '))
   if (c === 'dom' || c === 'wroc do domu' || c === 'do domu') return goToCommand(['dom'])
-  if (verb === 'zabij') return args[0] ? killPlayer(rest.split(/\s+/)[0]) : say('Kogo? np. "zabij Nick".')
+  if (verb === 'zabij') return args[0] ? killCommand(rest) : say('Kogo? np. "zabij Nick", "zabij zombie", "zabij Burek".')
+  if (/^(pomoz|pomoc)$/.test(verb) && !/^pomoc$/.test(c)) return helpCommand(args.filter(a => !/^(w|przy|mu|jej|budowie|budowaniu|walce|burzeniu|wystroju)$/.test(a))[0])
+  if (c === 'pomoz') return helpCommand(null)
+  if (verb === 'popros') return requestCommand(rest)
 
   // --- punkty ---
   if (c === 'ustaw dom') return saveWaypoint('dom')
@@ -3850,7 +4116,7 @@ function handle(user, msg, whisper = false) {
   const haveQ = c.match(/^(?:czy masz|masz|ile masz)\s+(.+)$/)
   if (haveQ) return haveCommand(haveQ[1])
   if (c === 'jedz') return eatNow()
-  if (verb === 'daj' && args.length) { const { word, amount } = splitAmount(args.join(' ')); return giveItems(user, word, amount) }
+  if (verb === 'daj' && args.length) { const { word, amount } = splitAmount(args.join(' ')); return giveItems(player, word, amount) }
   if (verb === 'wez' && args.length) { const { word, amount } = splitAmount(args.join(' ')); return withdrawCommand(word, amount) }
   if (verb === 'schowaj') return depositCommand(args.join(' ') || null)
   if (verb === 'wyrzuc' && args.length) { const { word, amount } = splitAmount(args.join(' ')); return tossCommand(word, amount) }
@@ -3862,7 +4128,8 @@ function handle(user, msg, whisper = false) {
   if (talk) return say(talk[1](user))
 
   // nieznana komenda: odpowiadamy tylko na /msg i w konsoli, zeby nie odpowiadac na zwykla rozmowe na czacie
-  if (whisper || !user || LAN) say(`Nie znam komendy "${text}". Napisz "komendy".`)
+  const fromPlayer = !process.env.MC_PLAYER || user?.toLowerCase() === process.env.MC_PLAYER.toLowerCase()
+  if (whisper || !user || (LAN && fromPlayer)) say(`Nie znam komendy "${text}". Napisz "komendy".`)
 }
 
 // ---------- stan dla GUI (MC_GUI=1): co sekunde jedna linia JSON na wyjsciu ----------
