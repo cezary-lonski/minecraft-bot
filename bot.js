@@ -1187,7 +1187,7 @@ function run() {
 const HELP = [
   'Zadania: start, etap <drewno|kamien|jedzenie|zelazo|diamenty>, zdobadz <surowiec|przedmiot|jedzenie> [ile], poluj [zwierze] [ile], przepal, scraftuj <co>, stop',
   'Ruch: tu, idz <ile> <przod|tyl|lewo|prawo>, idz do <x z | punkt | gracz>, chodz za mna, ochraniaj [gracz], zabij <gracz>, spij',
-  'Budowa: rozbierz rusztowania, buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
+  'Budowa: wystroj <budowla>, rozbierz rusztowania, buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
   'Inne: status, co robisz, diag, chat <tekst>, permisja <nick>, odbierz <nick>, permisje'
@@ -1950,7 +1950,7 @@ const hasSupport = p => [[0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1
 // kierunek lokalny planu ({x: w prawo, z: do przodu}) -> kierunek w swiecie
 function worldDir(front, d) {
   const right = turnRight(front)
-  return { x: right.x * d.x + front.x * d.z, z: right.z * d.x + front.z * d.z }
+  return { x: right.x * (d.x || 0) + front.x * (d.z || 0), y: d.y || 0, z: right.z * (d.x || 0) + front.z * (d.z || 0) }
 }
 
 // staje w zasiegu reki, ale nie w miejscu, gdzie ma stanac blok.
@@ -2105,11 +2105,32 @@ function findScaffolding(cells, groundY) {
   return [...found.values()]
 }
 
+async function hangPainting(c, front) {
+  const it = bot.inventory.items().find(i => i.name === 'painting')
+  if (!it) return false
+  const a = worldDir(front, c.attach)
+  const wall = bot.blockAt(c.pos.offset(a.x, 0, a.z))
+  if (!wall || wall.boundingBox !== 'block') return false
+  try {
+    await goNearCell(c.pos)
+    await bot.equip(it, 'hand')
+    // jak gracz: klikniecie obrazem w sciane (placeEntity w mineflayer nie obsluguje obrazow)
+    const before = Object.values(bot.entities).filter(e => e.name === 'painting').length
+    await bot.activateBlock(wall, new Vec3(-a.x, 0, -a.z))
+    await sleep(400)
+    return Object.values(bot.entities).filter(e => e.name === 'painting').length > before
+  } catch (e) {
+    console.log('[bot] obraz:', e.message)
+    return false
+  }
+}
+
 async function removeScaffolding(found) {
   return await removeBlocksCarefully(found)
 }
 
 async function buildPlan(label, plan, origin, front, opts = {}) {
+  if (opts.type && !opts.decor) recordBuild(opts.type, origin, front)
   const cells = plan.map(c => ({ ...c, pos: toWorld(origin, front, c.x, c.y, c.z) }))
   for (const c of cells) if (c.temp) c.block = 'dirt' // tymczasowe podpory (np. pod kropka nad "i"), na koncu znikaja
   const solidCells = cells.filter(c => c.block !== 'air')
@@ -2128,7 +2149,10 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
     for (const c of cells) if (c.optional) extras[c.block] = (extras[c.block] || 0) + 1
     const lacking = Object.entries(extras).filter(([name, n]) => haveOf(name) < n)
     let wantExtras = false
-    if (lacking.length) {
+    if (lacking.length && isCreative()) {
+      wantExtras = true // w kreatywnym ozdoby sa od reki - nie ma o co pytac
+      for (const [name, n] of lacking) await creativeGive(name, n)
+    } else if (lacking.length) {
       setStatus(`czekam na odpowiedz: zdobyc ozdoby na ${label} czy budowac bez nich`)
       const list = lacking.map(([name, n]) => `${n - haveOf(name)} x ${name}`).join(', ')
       const choice = await askUser(`Potrzebuje jeszcze: ${list}. Mam po nie pojsc czy budowac bez nich? (pojdz / buduj bez)`,
@@ -2162,6 +2186,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
       if (!running) return false
       const b = bot.blockAt(c.pos)
       if (!b || b.boundingBox !== 'block' || sameKind(b.name, c.block)) continue
+      if (opts.decor && c.block !== 'air') continue // wystroj nie burzy tego, co juz stoi
       setStatus(`przygotowuje teren pod ${label}`)
       try { await goNearCell(c.pos); await clearBlock(c.pos) } catch (e) { console.log('[bot] teren:', e.message) }
     }
@@ -2184,7 +2209,9 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
           if (!running) break
           const cur = bot.blockAt(c.pos)
           if (cur && sameKind(cur.name, c.block)) { placed++; continue }
-          if (y === layers[0]) await fillBelow(c.pos)
+          if (opts.decor && cur && cur.name !== 'air' && cur.boundingBox !== 'empty') continue // zajete - zostawiamy
+          if (c.block === 'painting') { if (await hangPainting(c, front)) placed++; continue }
+          if (y === layers[0] && !opts.decor) await fillBelow(c.pos)
           if (!hasSupport(c.pos)) { next.push(c); continue }
           const it = invItemFor(c.block)
           if (!it) { if (!c.optional) failed++; continue }
@@ -2206,7 +2233,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
 
     // 3) rusztowania: pathfinder, zeby siegnac wysoko, stawia slupki z ziemi/bruku i ich nie rozbiera.
     //    Wszystko z tych blokow, co stoi w obrysie budowli (+1 blok dookola) od poziomu gruntu w gore, a nie nalezy do planu - kopiemy.
-    if (running) {
+    if (running && !opts.decor) {
       bot.pathfinder.setMovements(normalMoves)
       const scaffold = findScaffolding(cells, origin.y)
       if (scaffold.length) {
@@ -2573,6 +2600,197 @@ function planText(text, block) {
   return replaceInterior(p)
 }
 
+// ---------- wystroj wnetrz ----------
+// Zapamietane budowle (typ, punkt startu, kierunek) - zeby "wystroj zamek" wiedzial, gdzie zamek stoi i jak jest obrocony.
+const builds = loadJson('builds.json', [])
+function recordBuild(type, origin, front) {
+  builds.push({ type, origin: { x: origin.x, y: origin.y, z: origin.z }, front, dim: bot.game?.dimension, at: Date.now() })
+  saveJson('builds.json', builds)
+}
+
+// typy budowli: rozpoznanie z tekstu i odleglosc poczatku planu przed botem
+const BUILD_TYPES = [
+  { type: 'dom villagera', re: /^(dom vil|dom wies|chat|chalupa)/, ahead: 3 },
+  { type: 'baza podziemna', re: /^(baza pod|podziem|bunkier)/, ahead: 1 },
+  { type: 'palac endu', re: /^(palac endu|palac z end|endowy palac|palac end|end palac|palac purpur|palac kresu)/, ahead: 4 },
+  { type: 'zamczysko', re: /^zamczysk/, ahead: 3 },
+  { type: 'palac', re: /^(palac|palacyk)/, ahead: 3 },
+  { type: 'zamek', re: /^zam/, ahead: 3 },
+  { type: 'dom', re: /^(dom|baz|chat)/, ahead: 3 }
+]
+const matchBuildType = t => BUILD_TYPES.find(b => b.re.test(t))
+
+// Pokoj: wnetrze x1..x2, z1..z2 (lokalnie), podloga na wysokosci y, h blokow wysokosci (strop na y+h).
+// Wejscie od strony z1. keep: komorki "x,z", ktorych nie zastawiamy (schody, przejscia, istniejace meble).
+// theme: 'wood' (drewno, czerwony dywan, latarnie) albo 'end' (purpur, fiolet, end rody).
+function decorateRoom(p, room) {
+  const { x1, x2, z1, z2, y, h, theme = 'wood', keep = [], library = false, bed = true } = room
+  const free = new Set(keep)
+  const used = new Set()
+  const put = (x, yy, z, block, extra = {}) => {
+    const k = `${x},${z}`
+    if (yy === y && (free.has(k) || used.has(k))) return false
+    if (yy === y) used.add(k)
+    p.push({ x, y: yy, z, block, ...extra })
+    return true
+  }
+  const end = theme === 'end'
+  const cx = Math.round((x1 + x2) / 2)
+  // wolne przejscie od wejscia do srodka
+  for (let z = z1; z <= z1 + 1; z++) for (let x = cx - 1; x <= cx + 1; x++) free.add(`${x},${z}`)
+
+  // 1) oswietlenie: latarnie (w Endzie end rody) zwisajace ze stropu, co 4 bloki
+  for (let x = x1 + 1; x <= x2 - 1; x += 4) {
+    for (let z = z1 + 1; z <= z2 - 1; z += 4) {
+      p.push({ x, y: y + h - 1, z, block: end ? 'end_rod' : 'lantern', attach: { x: 0, y: 1, z: 0 } })
+    }
+  }
+  // 2) srodek: stol z dwoma krzeslami (krzesla przed stolem - bot stawia je, stojac w miejscu stolu)
+  const tz = Math.round((z1 + z2) / 2)
+  const chair = end ? 'purpur_stairs' : 'oak_stairs'
+  if (x2 - x1 >= 4 && z2 - z1 >= 4 && ![cx - 1, cx, cx + 1].some(x => free.has(`${x},${tz}`))) {
+    put(cx - 1, y, tz, chair, { facing: { x: -1, z: 0 } })
+    put(cx + 1, y, tz, chair, { facing: { x: 1, z: 0 } })
+    if (put(cx, y, tz, end ? 'end_stone_brick_wall' : 'oak_fence')) p.push({ x: cx, y: y + 1, z: tz, block: end ? 'purpur_slab' : 'oak_pressure_plate' })
+  }
+  // 3) przy prawej scianie: stol warsztatowy, piec, wedzarnia, skrzynie
+  const utilities = ['crafting_table', 'furnace', 'smoker', 'chest', 'barrel']
+  let zz = z1 + 2
+  for (const u of utilities) { if (zz > z2 - 1) break; put(x2, y, zz, u); zz++ }
+  // 4) przy lewej scianie: lozko (wezglowie przy scianie) i obok szafka z ksiazkami
+  if (bed && z2 - z1 >= 3) {
+    const bz = z2 - 1
+    if (!free.has(`${x1},${bz}`) && !free.has(`${x1 + 1},${bz}`)) {
+      used.add(`${x1},${bz}`) // wezglowie lozka
+      put(x1 + 1, y, bz, end ? 'purple_bed' : 'red_bed', { facing: { x: -1, z: 0 } })
+    }
+  }
+  // 5) tylna sciana: regaly z ksiazkami (2 wysokie, gdy pokoj jest wysoki), z przerwa na srodku
+  if (h >= 3) {
+    for (let x = x1; x <= x2; x++) {
+      if (Math.abs(x - cx) <= 1) continue
+      if (put(x, y, z2, 'bookshelf', { optional: true }) && h >= 4) p.push({ x, y: y + 1, z: z2, block: 'bookshelf', optional: true })
+    }
+  }
+  // 6) biblioteka: stol do zaklinania na srodku tylnej czesci
+  if (library) put(cx, y, z2 - 2, 'enchanting_table', { optional: true })
+  // 7) dywan na srodku podlogi (ozdoba)
+  for (let x = x1 + 2; x <= x2 - 2; x++) {
+    for (let z = z1 + 2; z <= z2 - 2; z++) put(x, y, z, end ? 'purple_carpet' : 'red_carpet', { optional: true })
+  }
+  // 8) obrazy na bocznych scianach (na wysokosci oczu)
+  if (h >= 3) {
+    for (let z = z1 + 2; z <= z2 - 2; z += 3) {
+      p.push({ x: x1, y: y + 1, z, block: 'painting', attach: { x: -1, z: 0 }, optional: true })
+      p.push({ x: x2, y: y + 1, z: z + 1, block: 'painting', attach: { x: 1, z: 0 }, optional: true })
+    }
+  }
+}
+
+// drabina wzdluz sciany: komorki (x, y0..y1, z) przyczepione do sciany w kierunku attach; holes - otwory do wybicia
+function ladder(p, x, z, y0, y1, attach, holes = []) {
+  for (let y = y0; y <= y1; y++) p.push({ x, y, z, block: 'ladder', attach })
+  for (const [hx, hy, hz] of holes) p.push({ x: hx, y: hy, z: hz, block: 'air' })
+}
+
+const PLAN_FOR_TYPE = {
+  dom: () => planHouse(), 'dom villagera': () => planVillagerHouse(), zamek: () => planCastle(), zamczysko: () => planBigCastle(),
+  palac: () => planPalace(), 'palac endu': () => planEndPalace(), 'baza podziemna': () => planUndergroundRoom()
+}
+
+function decorPlan(type) {
+  const p = []
+  // brakujace ozdoby z planu (okna, w palacu endu fioletowe witraze) - wstawiane tylko tam, gdzie jest pusto
+  const base = PLAN_FOR_TYPE[type]
+  if (base) for (const c of base()) if (c.optional) p.push({ ...c, optional: false })
+  if (type === 'dom') {
+    decorateRoom(p, { x1: -2, x2: 2, z1: 1, z2: 5, y: 0, h: 4, keep: ['-2,5', '2,5', '-2,3', '2,1'] })
+  } else if (type === 'dom villagera') {
+    p.push({ x: 0, y: 2, z: 2, block: 'lantern', attach: { x: 0, y: 1, z: 0 } })
+    p.push({ x: -1, y: 0, z: 3, block: 'crafting_table' }, { x: -1, y: 0, z: 2, block: 'chest' }, { x: 1, y: 0, z: 2, block: 'barrel' })
+    p.push({ x: 1, y: 2, z: 2, block: 'painting', attach: { x: 1, z: 0 }, optional: true })
+  } else if (type === 'zamek') {
+    // drabiny na mury (tam, gdzie na gorze nie ma blanki) i na kazda wieze
+    ladder(p, -5, 5, 0, 4, { x: -1, z: 0 })
+    ladder(p, 5, 5, 0, 4, { x: 1, z: 0 })
+    ladder(p, 1, 11, 0, 4, { x: 0, z: 1 })
+    for (const [x, z, a] of [[-5, 3, -1], [5, 3, -1], [-5, 9, 1], [5, 9, 1]]) ladder(p, x, z, 0, 7, { x: 0, z: a })
+    // latarnie na slupkach na dziedzincu
+    for (const [x, z] of [[-3, 4], [3, 4], [-3, 8], [3, 8]]) {
+      p.push({ x, y: 0, z, block: 'oak_fence' }, { x, y: 1, z, block: 'oak_fence' }, { x, y: 2, z, block: 'lantern' })
+    }
+    p.push({ x: -4, y: 0, z: 9, block: 'furnace' }, { x: 4, y: 0, z: 9, block: 'barrel' })
+  } else if (type === 'zamczysko') {
+    ladder(p, -9, 9, 0, 6, { x: -1, z: 0 })
+    ladder(p, 9, 9, 0, 6, { x: 1, z: 0 })
+    ladder(p, 1, 19, 0, 6, { x: 0, z: 1 })
+    // wieze: drzwi od dziedzinca i drabina w srodku
+    for (const [cx, cz] of [[-10, 0], [10, 0], [-10, 20], [10, 20]]) {
+      const dx = cx < 0 ? 1 : -1
+      const dz = cz === 0 ? 1 : -1
+      p.push({ x: cx + 2 * dx, y: 0, z: cz + dz, block: 'air' }, { x: cx + 2 * dx, y: 1, z: cz + dz, block: 'air' })
+      ladder(p, cx, cz - dz, 0, 11, { x: 0, z: -dz })
+    }
+    // donzon: pokoj na parterze i drabina na dach (z otworem)
+    decorateRoom(p, { x1: -2, x2: 2, z1: 12, z2: 16, y: 0, h: 5, keep: ['-2,16', '2,16', '-2,13', '0,14', '2,13'] })
+    ladder(p, 2, 15, 0, 13, { x: 1, z: 0 }, [[2, 14, 15]])
+    for (const [x, z] of [[-6, 5], [6, 5], [-6, 15], [6, 15]]) {
+      p.push({ x, y: 0, z, block: 'cobblestone_wall' }, { x, y: 1, z, block: 'cobblestone_wall' }, { x, y: 2, z, block: 'lantern' })
+    }
+  } else if (type === 'palac') {
+    decorateRoom(p, { x1: -6, x2: 6, z1: 3, z2: 11, y: 0, h: 8, keep: ['-5,10', '5,10', '-5,4', '5,4', '-5,9', '5,9', '1,11', '1,10'] })
+    ladder(p, 1, 11, 0, 7, { x: 0, z: 1 }, [[1, 8, 11]]) // na dach, przy kolumnie z pni
+    for (const [cx, cz] of [[-7, 2], [7, 2], [-7, 12], [7, 12]]) ladder(p, cx - 1, cz - 1, 0, 14, { x: -1, z: 0 }, [[cx - 1, 14, cz - 1], [cx - 1, 15, cz - 1]])
+    p.push({ x: 2, y: 9, z: 7, block: 'air' }, { x: 2, y: 10, z: 7, block: 'air' }) // drzwi z dachu do wiezy srodkowej
+    ladder(p, -1, 6, 9, 16, { x: -1, z: 0 }, [[-1, 16, 6], [-1, 17, 6]])
+  } else if (type === 'palac endu') {
+    // parter (schody na pietro przy lewej scianie, meble z planu) i pietro z biblioteka
+    decorateRoom(p, {
+      x1: -6, x2: 6, z1: 8, z2: 20, y: 1, h: 4, theme: 'end',
+      keep: ['-6,11', '-6,12', '-6,13', '-6,14', '-6,15', '-6,10', '-5,11', '-5,12', '-5,13', '-5,14', '-5,15', '-4,20', '-3,20', '3,20', '4,20', '-5,9', '5,9', '5,19', '-5,19', '0,14']
+    })
+    decorateRoom(p, {
+      x1: -6, x2: 6, z1: 8, z2: 20, y: 6, h: 4, theme: 'end', library: true, bed: false,
+      keep: ['-6,10', '-6,11', '-6,12', '-6,13', '-6,14', '-6,15', '-5,15', '-5,16', '4,20', '4,19', '2,20', '-5,9', '5,9', '5,19', '-5,19', '0,14']
+    })
+    // drabiny jak w nowym planie (dla palacow zbudowanych wczesniej)
+    for (const [cx, cz] of [[-7, 7], [7, 7], [-7, 21], [7, 21]]) ladder(p, cx, cz - 1, 1, 16, { x: 0, z: -1 }, [[cx, 17, cz - 1]])
+    ladder(p, 4, 20, 6, 10, { x: 0, z: 1 }, [[4, 11, 20]])
+    p.push({ x: 3, y: 11, z: 14, block: 'air' }, { x: 3, y: 12, z: 14, block: 'air' })
+    ladder(p, 0, 12, 11, 23, { x: 0, z: -1 }, [[0, 24, 12]])
+  } else if (type === 'baza podziemna') {
+    decorateRoom(p, { x1: -3, x2: 3, z1: 0, z2: 6, y: 0, h: 3, keep: ['-3,6', '3,6', '-3,3', '-2,1', '2,1', '-2,5', '2,5'] })
+  } else {
+    return null
+  }
+  return replaceInterior(p)
+}
+
+// "wystroj <budowla> [tutaj]"
+function decorCommand(text) {
+  const t = stripPl(text).trim()
+  const here = /\btutaj|\btu$/.test(t)
+  const bt = matchBuildType(t.replace(/\s*\b(tutaj|tu)$/, ''))
+  if (!bt) { say('Co wystroic? dom, dom villagera, zamek, zamczysko, palac, palac endu, baza podziemna'); return }
+  let origin, front
+  if (here) {
+    // bot stoi tam, gdzie zaczynal budowe, i patrzy w te sama strone
+    front = facingAxis()
+    origin = bot.entity.position.floored().offset(front.x * bt.ahead, 0, front.z * bt.ahead)
+  } else {
+    const rec = [...builds].reverse().find(b => b.type === bt.type && (!b.dim || !bot.game?.dimension || b.dim === bot.game.dimension))
+    if (!rec) {
+      say(`Nie pamietam, gdzie stoi ${bt.type} (budowany starsza wersja?). Postaw mnie tam, gdzie zaczynalem budowe, obroc tak jak wtedy i napisz "wystroj ${bt.type} tutaj".`)
+      return
+    }
+    origin = new Vec3(rec.origin.x, rec.origin.y, rec.origin.z)
+    front = rec.front
+  }
+  const plan = decorPlan(bt.type)
+  if (!plan) { say(`Nie mam pomyslu na wystroj: ${bt.type}.`); return }
+  return task(`wystroj: ${bt.type}`, () => buildPlan(`wystroj (${bt.type})`, plan, origin, front, { decor: true, passes: 3 }))
+}
+
 // ---------- slup do nieba ----------
 async function pillarUp(targetY) {
   const block = () => bot.inventory.items().find(i => SCAFFOLD.includes(i.name))
@@ -2745,12 +2963,12 @@ function buildCommand(text) {
   const front = facingAxis()
   const ahead = n => bot.entity.position.floored().offset(front.x * n, 0, front.z * n)
 
-  if (/^(dom vil|dom wies|chat|chalupa)/.test(t)) return task('budowa domu villagera', () => buildPlan('dom villagera', planVillagerHouse(), ahead(3), front))
+  if (/^(dom vil|dom wies|chat|chalupa)/.test(t)) return task('budowa domu villagera', () => buildPlan('dom villagera', planVillagerHouse(), ahead(3), front, { type: 'dom villagera' }))
   if (/^(baza pod|podziem|bunkier)/.test(t)) {
     return task('budowa bazy podziemnej', async () => {
       say('Kopie zejscie do bazy podziemnej.')
       for (let i = 0; i < 8 && running; i++) await stepTo(front, -1)
-      await buildPlan('baza podziemna', planUndergroundRoom(), bot.entity.position.floored().offset(front.x, 0, front.z), front)
+      await buildPlan('baza podziemna', planUndergroundRoom(), bot.entity.position.floored().offset(front.x, 0, front.z), front, { type: 'baza podziemna' })
     })
   }
   if (/^(sky|baza w niebie|niebo|podniebn)/.test(t)) {
@@ -2782,12 +3000,12 @@ function buildCommand(text) {
   if (/^(palac endu|palac z end|endowy palac|palac end|end palac|palac purpur|palac kresu)/.test(t)) {
     return task('budowa palacu endu', async () => {
       if (!isCreative()) say('Uwaga: end stone, purpur i end rody sa tylko w Endzie - w survivalu bede potrzebowal ich w ekwipunku. W kreatywnym wezme je sam.')
-      await buildPlan('palac endu', planEndPalace(), ahead(4), front, { passes: 6 })
+      await buildPlan('palac endu', planEndPalace(), ahead(4), front, { passes: 6, type: 'palac endu' })
     })
   }
-  if (/^zamczysk/.test(t)) return task('budowa zamczyska', () => buildPlan('zamczysko', planBigCastle(), ahead(3), front))
-  if (/^(palac|palacyk)/.test(t)) return task('budowa palacu', () => buildPlan('palac', planPalace(), ahead(3), front))
-  if (/^zam/.test(t)) return task('budowa zamku', () => buildPlan('zamek', planCastle(), ahead(3), front))
+  if (/^zamczysk/.test(t)) return task('budowa zamczyska', () => buildPlan('zamczysko', planBigCastle(), ahead(3), front, { type: 'zamczysko' }))
+  if (/^(palac|palacyk)/.test(t)) return task('budowa palacu', () => buildPlan('palac', planPalace(), ahead(3), front, { type: 'palac' }))
+  if (/^zam/.test(t)) return task('budowa zamku', () => buildPlan('zamek', planCastle(), ahead(3), front, { type: 'zamek' }))
   if (/^farm/.test(t)) {
     const what = t.replace(/^farm\w*\s*/, '')
     const crop = CROPS.find(([re]) => re.test(what))
@@ -2803,7 +3021,7 @@ function buildCommand(text) {
     say('Farma czego? farma zboza / marchwi / ziemniakow / burakow / drzew / trzciny / zwierzat')
     return
   }
-  if (/^(dom|baz|chat)/.test(t)) return task('budowa domu', () => buildPlan('dom', planHouse(), ahead(3), front))
+  if (/^(dom|baz|chat)/.test(t)) return task('budowa domu', () => buildPlan('dom', planHouse(), ahead(3), front, { type: 'dom' }))
   say('Co zbudowac? dom, zamek, zamczysko, palac, palac endu, dom villagera, baza podziemna, skybase, napis: <tekst>, farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>')
 }
 
@@ -2969,7 +3187,7 @@ function haveCommand(word) {
 async function placeBlockAt(itemName, target, attach) {
   const here = bot.blockAt(target)
   if (here && here.boundingBox === 'block') throw new Error(`miejsce jest zajete (${here.name})`)
-  const sides = attach ? [[attach.x, 0, attach.z]] : [[0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]]
+  const sides = attach ? [[attach.x || 0, attach.y || 0, attach.z || 0]] : [[0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]]
   for (const [dx, dy, dz] of sides) {
     const ref = bot.blockAt(target.offset(dx, dy, dz))
     if (!ref || ref.boundingBox !== 'block') continue
@@ -3445,6 +3663,7 @@ function handle(user, msg, whisper = false) {
   if (/^(poluj|upoluj)$/.test(verb)) return huntCommand(args)
   if (c === 'spij' || c === 'idz spac') return sleepCommand()
   if (/^(buduj|zbuduj|postaw budynek)$/.test(verb)) return buildCommand(args.join(' '))
+  if (/^(wystroj|udekoruj|urzadz|umebluj)$/.test(verb)) return decorCommand(args.join(' '))
   if (/^(rozbierz|usun|posprzataj|sprzatnij) rusztowani/.test(c) || c === 'posprzataj') return cleanupCommand()
   if (c === 'przeszukaj' || c === 'przeszukaj skrzynie') return lootCommand()
   if (/^szukaj( skrzyn\w*)?$/.test(c)) return searchChestsCommand()

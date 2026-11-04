@@ -109,7 +109,19 @@ Duze budowle (ponad 600 blokow - zamczysko, palac) nie mieszcza sie w ekwipunku,
 po kawalku na kolejne 3 warstwy, buduje je i idzie po nastepna partie. Materialow budowy nie wyrzuca przy sprzataniu ekwipunku.
 Wiszace czesci napisow (np. srodek litery Z, kropka w "!") dostaja tymczasowe podpory z ziemi, ktore na koncu znikaja.
 
-Gdy brakuje ozdob (szyby, pochodnie), bot pyta: "Potrzebuje jeszcze: 3 x glass_pane. Mam po nie pojsc czy budowac bez nich?" -
+### Wystroj wnetrz: `wystroj <budowla>`
+`wystroj dom` / `dom villagera` / `zamek` / `zamczysko` / `palac` / `palac endu` / `baza podziemna` - bot urzadza wnetrze
+budowli, ktora postawil (pamieta, gdzie i jak obrocona stoi - plik builds.json):
+- **drabiny**: na mury (tam, gdzie na gorze nie ma blanki), do wiez (z drzwiami i wyjsciem na gore), na dach,
+- **oswietlenie**: latarnie zwisajace ze stropu (w palacu endu end rody), latarnie na slupkach na dziedzincu,
+- **meble**: stol z dwoma krzeslami ze schodow, stol warsztatowy, piec, wedzarnia, skrzynie, beczka, lozko,
+  regaly z ksiazkami, w palacu endu biblioteka ze stolem do zaklinania, dywany (czerwone / fioletowe), obrazy,
+- **brakujace okna**: szyby, a w palacu endu fioletowe witraze, jesli budowa szla bez nich.
+
+Wstawia rzeczy tylko w puste miejsca - niczego nie burzy (poza otworami na drabiny).
+Budowle postawione starsza wersja: postaw bota tam, gdzie zaczynal budowe, obroc tak jak wtedy i napisz `wystroj <budowla> tutaj`.
+
+W kreatywnym ozdoby (szyby, witraze, pochodnie) bot bierze z menu bez pytania. W survivalu, gdy ich brakuje, pyta: "Potrzebuje jeszcze: 3 x glass_pane. Mam po nie pojsc czy budowac bez nich?" -
 odpowiedz `pojdz` albo `buduj bez` (bez odpowiedzi przez 90 s buduje bez nich).
 
 ### Punkty
