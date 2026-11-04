@@ -792,6 +792,84 @@ async function eatIfLow() {
 
 setInterval(survivalTick, 400)
 
+// ---------- odblokowanie: bot wbity w blok albo zaklinowany ----------
+// pozycje stawianych wlasnie blokow budowli - tych przy odblokowywaniu nie kopiemy
+const noDigPositions = new Set()
+
+// blok, ktorego ksztalt naprawde nachodzi na cialo bota (0.6 x 1.8) - wtedy bot jest w nim "wbity"
+function embeddedBlock() {
+  const p = bot.entity.position
+  const box = [p.x - 0.29, p.y + 0.05, p.z - 0.29, p.x + 0.29, p.y + 1.75, p.z + 0.29]
+  for (let x = Math.floor(box[0]); x <= Math.floor(box[3]); x++) {
+    for (let y = Math.floor(box[1]); y <= Math.floor(box[4]); y++) {
+      for (let z = Math.floor(box[2]); z <= Math.floor(box[5]); z++) {
+        const b = bot.blockAt(new Vec3(x, y, z))
+        if (!b || !b.shapes?.length) continue
+        for (const s of b.shapes) {
+          if (x + s[0] < box[3] && x + s[3] > box[0] && y + s[1] < box[4] && y + s[4] > box[1] && z + s[2] < box[5] && z + s[5] > box[2]) return b
+        }
+      }
+    }
+  }
+  return null
+}
+
+let unsticking = false
+let stuckSince = Date.now()
+let lastMovePos = null
+async function unstickTick() {
+  if (!bot.entity || !mcData || unsticking || bot.targetDigBlock || bot.isSleeping || escaping || bot.health <= 0) return
+  const pos = bot.entity.position
+  // "chce isc": pathfinder prowadzi albo wcisniety jest klawisz ruchu
+  const wantsMove = bot.pathfinder.isMoving() || bot.controlState.forward || bot.controlState.back
+  if (!lastMovePos || pos.distanceTo(lastMovePos) > 0.3 || !wantsMove) { lastMovePos = pos.clone(); stuckSince = Date.now() }
+  const inside = embeddedBlock()
+  const jammed = wantsMove && Date.now() - stuckSince > 5000
+  if (!inside && !jammed) return
+
+  unsticking = true
+  try {
+    const canBreak = b => b && b.boundingBox === 'block' && bot.canDigBlock(b) && !noDigPositions.has(posKey(b.position)) &&
+      !/_door$|_fence_gate$|chest|furnace|crafting_table|bed$/.test(b.name)
+    if (inside) {
+      console.log(`[bot] jestem wbity w ${inside.name} - wykopuje sie`)
+      if (/_door$|_fence_gate$/.test(inside.name)) { await bot.activateBlock(inside) } // drzwi/furtke otwieramy
+      else if (canBreak(inside)) { try { await bot.tool.equipForBlock(inside, {}) } catch {} await bot.dig(inside, true) }
+      else {
+        // nie da sie wykopac (np. czesc budowli): wyskakujemy w gore/bok
+        bot.setControlState('jump', true)
+        bot.setControlState('back', true)
+        await sleep(500)
+        bot.setControlState('jump', false)
+        bot.setControlState('back', false)
+      }
+    } else {
+      console.log('[bot] utknalem w miejscu - probuje sie odblokowac')
+      // co blokuje droge przed nami na wysokosci nog i glowy
+      const feet = pos.floored()
+      const d = facingAxis()
+      for (const p of [feet.offset(d.x, 1, d.z), feet.offset(d.x, 0, d.z)]) {
+        const b = bot.blockAt(p)
+        if (canBreak(b)) { try { await bot.tool.equipForBlock(b, {}) } catch {} try { await bot.dig(b, true) } catch {} }
+      }
+      // skok (np. na stopien) i lekki ruch w bok
+      bot.setControlState('jump', true)
+      bot.setControlState(Math.random() < 0.5 ? 'left' : 'right', true)
+      await sleep(400)
+      bot.clearControlStates()
+      // pathfinder liczy droge od nowa z nowego miejsca (ten sam cel, wiec trwajace "idz do" nie jest przerywane)
+      if (bot.pathfinder.goal) bot.pathfinder.setMovements(bot.pathfinder.movements)
+    }
+  } catch (e) {
+    console.log('[bot] odblokowanie:', e.message)
+  } finally {
+    stuckSince = Date.now()
+    lastMovePos = bot.entity.position.clone()
+    unsticking = false
+  }
+}
+setInterval(unstickTick, 1000)
+
 // automatyczne jedzenie: gdy glod albo zdrowie spadnie ponizej 4 ikon (8 punktow z 20)
 const AUTO_EAT_BELOW = parseInt(process.env.MC_EAT_BELOW || '8')
 let eating = false
@@ -1894,6 +1972,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
   const solidCells = cells.filter(c => c.block !== 'air')
   const batched = solidCells.length > BATCH_LIMIT
   for (const c of solidCells) protectedItems.add(WOOD_RE.test(c.block) ? 'log' : c.block)
+  for (const c of solidCells) noDigPositions.add(posKey(c.pos)) // odblokowywanie nie rusza budowli
   const normalMoves = bot.pathfinder.movements
   try {
     // najpierw to, bez czego sie nie da (sciany, dach, meble); duze budowle - partiami w trakcie
@@ -1995,6 +2074,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
   } finally {
     bot.pathfinder.setMovements(normalMoves)
     protectedItems.clear()
+    noDigPositions.clear()
   }
 }
 

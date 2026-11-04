@@ -154,6 +154,9 @@ Okolo 100 polskich nazw: zbroje i narzedzia (`diamentowy set`, `zelazna zbroja`,
 - **Jedzenie:** je, gdy glod lub zdrowie spadnie ponizej 4 ikon; bez jedzenia idzie polowac.
 - **Narzedzia:** robi kilof potrzebny do danej rudy (drewniany -> kamienny -> zelazny), nowy, gdy stary sie zepsuje.
 - **Skrzynie (tylko LAN):** w trakcie zadan zaglada do znalezionych skrzyn i bierze lepsze rzeczy; bez zadania pyta "Moge ja otworzyc?".
+- **Odblokowywanie:** gdy bot jest wbity w blok (np. po spadnieciu piasku, zle postawionym bloku), sam sie wykopuje;
+  gdy chce isc, a 5 s stoi w miejscu, przekopuje to, co ma przed soba, podskakuje i liczy droge od nowa.
+  Nie kopie przy tym scian budowanej wlasnie budowli, drzwi, skrzyn ani pieca.
 - **Pelny ekwipunek:** wyrzuca smieci (bruk glebinowy, ziemia, zwir...), zeby zmiescic rude.
 
 ## Zmienne srodowiskowe
