@@ -152,6 +152,10 @@ function handleBotLine(id, line) {
     } catch {}
     return
   }
+  if (line.startsWith('@@AICMDRES ')) {
+    try { const r = JSON.parse(line.slice(11)); aiCmdWaiters.get(r.id)?.(r) } catch {}
+    return
+  }
   if (line.startsWith('@@AI ')) {
     try { handleAiRequest(id, JSON.parse(line.slice(5))) } catch {}
     return
@@ -182,6 +186,26 @@ function sendCommand(id, text) {
   e.proc.stdin.write(String(text).trim() + '\n')
   send('log', { id, kind: 'me', text: '> ' + text })
   return { ok: true }
+}
+
+// komenda od AI: bot odsyla (@@AICMDRES), czy ja zrozumial - AI dostaje to jako wynik narzedzia i moze sie poprawic
+const aiCmdWaiters = new Map()
+let aiCmdSeq = 0
+function sendAiCommand(id, text) {
+  const e = procs.get(id)
+  if (!e) return { ok: false, error: 'Ten bot nie działa.' }
+  const reqId = ++aiCmdSeq
+  send('log', { id, kind: 'me', text: '🤖> ' + text })
+  return new Promise(resolve => {
+    const done = r => { clearTimeout(timer); aiCmdWaiters.delete(reqId); resolve(r) }
+    const timer = setTimeout(() => done({ ok: true, info: 'Komenda wysłana.' }), 3000)
+    aiCmdWaiters.set(reqId, r => done(r.ok
+      ? { ok: true, info: 'Bot przyjął komendę i ją wykonuje (długie zadania trwają minuty).' }
+      : r.busy
+        ? { ok: false, error: `Bot jest zajęty: ${r.busy}. Poczekaj albo najpierw wyślij "stop".` }
+        : { ok: false, error: `Bot nie zna komendy "${text}". Użyj dokładnie komendy z listy (np. "zdobadz drewno 16", "buduj <nazwa>", "tu").` }))
+    e.proc.stdin.write('@@AICMD ' + JSON.stringify({ id: reqId, text }) + '\n')
+  })
 }
 
 // ---------- profile ----------
@@ -320,7 +344,7 @@ const assistant = createAssistant({
     const list = loadProfiles()
     const p = list.find(x => x.id === who) || list.find(x => x.name.toLowerCase() === String(who || '').toLowerCase()) || list.find(x => procs.has(x.id))
     if (!p) return { ok: false, error: 'Żaden bot nie działa.' }
-    return sendCommand(p.id, text)
+    return sendAiCommand(p.id, text)
   },
   state: () => ({
     bots: loadProfiles().map(p => ({ name: p.name, mode: p.mode, running: procs.has(p.id), status: lastStatus.get(p.id) || null })),

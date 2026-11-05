@@ -72,7 +72,9 @@ TERAZ JESTEŚ W GRZE: nazywasz się ${ctx.botName} i jesteś botem w Minecrafcie
 - Gdy gracz prosi, żebyś coś zrobił, zrób to sam narzędziem run_bot_command (bez parametru bot - polecenie trafi do Ciebie)
   zamiast tłumaczyć komendy. Długie zadania (zdobywanie, budowa) uruchom i krótko powiedz, że się za to bierzesz.
 - Gdy prosi o nową budowlę: create_building, a potem run_bot_command "buduj <nazwa>", jeśli chce, żeby od razu stanęła.
-- Komendy serwera zaczynające się od "/" są dla Ciebie zablokowane.`
+- Komendy serwera zaczynające się od "/" są dla Ciebie zablokowane.
+- Używaj tylko komend z listy, dokładnie w tej postaci. Jeśli narzędzie zwróci błąd, popraw komendę albo powiedz graczowi, czego brakuje.
+- Na zwykłą rozmowę (powitanie, pytanie) odpowiadaj samym tekstem, bez narzędzi.`
 
 const TOOLS = [
   {
@@ -170,18 +172,22 @@ async function geminiModels(key) {
 // model z wyczerpanym limitem (429) odpoczywa 15 min, przeciazony (503) - 5 min, nieistniejacy (404) - dobe
 const geminiCooldown = new Map()
 const coolingDown = m => (geminiCooldown.get(m) || 0) > Date.now()
+// model, ktory ostatnio odpowiedzial - od niego zaczynamy (najnowsze bywaja przeciazone i dlugo zwracaja blad)
+let lastGoodModel = null
+// modele, ktore nie przyjmuja ustawienia myslenia - wysylamy bez niego
+const noThinkingConfig = new Set()
 
-async function geminiCall(key, model, body) {
+async function geminiCall(key, model, body, timeoutMs = 45000) {
   let r
   try {
     r = await fetch(`${GEMINI_API}/models/${model}:generateContent`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(90000) // model, ktory nie odpowiada - przechodzimy na nastepny
+      signal: AbortSignal.timeout(timeoutMs) // model, ktory nie odpowiada - przechodzimy na nastepny
     })
   } catch (e) {
-    if (e.name === 'TimeoutError' || e.name === 'AbortError') throw Object.assign(new Error('Model nie odpowiedział w 90 s.'), { status: 504 })
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') throw Object.assign(new Error(`Model nie odpowiedział w ${timeoutMs / 1000} s.`), { status: 504 })
     throw e
   }
   const j = await r.json().catch(() => ({}))
@@ -273,16 +279,23 @@ function createAssistant(host) {
   async function chatGemini(key, c, system, ctx, mark) {
     const models = await geminiModels(key)
     let lastErr = null
-    for (const model of models) {
+    const order = lastGoodModel && models.includes(lastGoodModel) ? [lastGoodModel, ...models.filter(m => m !== lastGoodModel)] : models
+    for (let i = 0; i < order.length; i++) {
+      const model = order[i]
       if (coolingDown(model)) continue
       try {
-        return await geminiTurn(key, model, c, system, ctx)
+        const res = await geminiTurn(key, model, c, system, ctx)
+        lastGoodModel = model
+        return res
       } catch (e) {
         lastErr = e
+        c.messages.splice(mark + 1)
+        // model nie przyjmuje ustawienia myslenia - ten sam model jeszcze raz, bez niego
+        if (e.status === 400 && /thinking/i.test(e.message) && !noThinkingConfig.has(model)) { noThinkingConfig.add(model); i--; continue }
         if (![429, 500, 503, 504, 404].includes(e.status)) throw e
+        if (model === lastGoodModel) lastGoodModel = null
         geminiCooldown.set(model, Date.now() + (e.status === 404 ? 24 * 3600000 : e.status === 429 ? 15 * 60000 : 5 * 60000))
         console.log(`[ai] ${model}: ${e.status} - probuje nastepny model`)
-        c.messages.splice(mark + 1)
       }
     }
     throw lastErr || Object.assign(new Error('Wszystkie modele Gemini mają teraz wyczerpany limit.'), { status: 429 })
@@ -290,13 +303,24 @@ function createAssistant(host) {
 
   async function geminiTurn(key, model, c, system, ctx) {
     const replies = []
+    const done = [] // narzedzia wykonane w tej turze
     for (let step = 0; step < MAX_STEPS; step++) {
-      const j = await geminiCall(key, model, {
-        systemInstruction: { parts: [{ text: system }] },
-        contents: c.messages,
-        tools: GEMINI_TOOLS,
-        generationConfig: { maxOutputTokens: 16384 }
-      })
+      let j
+      try {
+        j = await geminiCall(key, model, {
+          systemInstruction: { parts: [{ text: system }] },
+          contents: c.messages,
+          tools: GEMINI_TOOLS,
+          // krotkie myslenie: odpowiedz w kilka sekund zamiast kilkudziesieciu
+          generationConfig: noThinkingConfig.has(model) ? { maxOutputTokens: 16384 } : { maxOutputTokens: 16384, thinkingConfig: { thinkingLevel: 'low' } }
+        }, ctx.inGame ? 25000 : 45000) // w grze gracz czeka na czacie - zawieszony model szybciej zmieniamy
+      } catch (e) {
+        // narzedzia juz zadzialaly (np. bot dostal komende) - nie powtarzamy tury na innym modelu, tylko ja konczymy
+        if (!done.length) throw e
+        const text = replies.length ? replies.join(' ') : ctx.inGame ? 'Już się za to biorę!' : `Zrobione (${done.join(', ')}).`
+        c.messages.push({ role: 'model', parts: [{ text }] })
+        return { replies: replies.length ? replies : [text], model }
+      }
       const cand = j.candidates?.[0]
       if (!cand?.content?.parts) {
         replies.push(j.promptFeedback?.blockReason ? '(Gemini nie odpowiedział na to pytanie.)' : '(Brak odpowiedzi od Gemini.)')
@@ -311,6 +335,7 @@ function createAssistant(host) {
       const responses = []
       for (const p of calls) {
         const out = await callTool(p.functionCall.name, p.functionCall.args, ctx)
+        done.push(p.functionCall.name)
         const json = JSON.stringify(out ?? {})
         const fr = { name: p.functionCall.name, response: json.length > 8000 ? { result: json.slice(0, 8000) } : (out ?? {}) }
         if (p.functionCall.id) fr.id = p.functionCall.id

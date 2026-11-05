@@ -100,7 +100,12 @@ function askUser(question, options, timeoutMs, def, timeoutText) {
 
 // wspolna obudowa dlugich zadan: jedno naraz, "stop" je przerywa (running = false), a po zakonczeniu bot staje
 async function task(name, fn) {
-  if (running) { say(`Jestem zajety (${currentTask}), napisz "stop".`); return }
+  if (running) {
+    // komenda od AI: nie piszemy na czacie, AI dostaje informacje zwrotna
+    if (aiCmd.active) { aiCmd.busy = currentTask; return }
+    say(`Jestem zajety (${currentTask}), napisz "stop".`)
+    return
+  }
   // po "stop" poprzednie zadanie moze jeszcze konczyc np. kopanie bloku - nie zaczynamy nowego w tym czasie
   if (activeTasks > 0) { say('Koncze poprzednie zadanie, sprobuj za chwile.'); return }
   running = true
@@ -4287,6 +4292,7 @@ process.stdin.on('data', d => {
   for (const line of lines) {
     if (line.startsWith('@@TEAM ')) { try { handleTeam(JSON.parse(line.slice(7))) } catch {} continue }
     if (line.startsWith('@@AIREPLY ')) { try { aiReply(JSON.parse(line.slice(10))) } catch {} continue }
+    if (line.startsWith('@@AICMD ')) { try { runAiCommand(JSON.parse(line.slice(8))) } catch {} continue }
     if (line.trim()) handle(null, line)
   }
 })
@@ -4329,6 +4335,14 @@ function askAi(user, text, whisper = false) {
   replyTo = whisper ? user : null
   say('Hmm, chwila...')
   process.stdout.write('@@AI ' + JSON.stringify({ id: aiPending.id, from: user, text }) + '\n')
+}
+// komenda od AI (przez program): wykonujemy jak z konsoli i od razu odsylamy, czy bot ja zrozumial
+// (sprawdzenie dzieje sie synchronicznie, zanim komenda zacznie zadanie) - AI moze wtedy poprawic komende
+const aiCmd = { active: false, unknown: false, busy: null }
+function runAiCommand(m) {
+  Object.assign(aiCmd, { active: true, unknown: false, busy: null })
+  try { handle(null, String(m.text || '')) } catch (e) { console.log('[bot] komenda od AI:', e.message) } finally { aiCmd.active = false }
+  process.stdout.write('@@AICMDRES ' + JSON.stringify({ id: m.id, ok: !aiCmd.unknown && !aiCmd.busy, unknown: aiCmd.unknown, busy: aiCmd.busy }) + '\n')
 }
 function aiReply(msg) {
   const p = aiPending
@@ -4510,6 +4524,8 @@ function handleCommand(user, msg, whisper = false) {
   if (talk) return say(talk[1](user))
 
   // nieznana komenda: odpowiadamy tylko na /msg i w konsoli, zeby nie odpowiadac na zwykla rozmowe na czacie
+  // komenda wydana przez AI, ktorej bot nie zna - AI dostaje informacje zwrotna zamiast "Nie znam komendy" na czacie
+  if (aiCmd.active) { aiCmd.unknown = true; return }
   // AI w grze: niezrozumiala wiadomosc do bota (jego nick, /msg, a w LAN kazda od gracza z ustawien) idzie do AI
   if (AI_ON && user && (aiAddressed || whisper || (LAN && process.env.MC_PLAYER)) && aiAllowed(user)) return askAi(user, text, whisper)
   const fromPlayer = !process.env.MC_PLAYER || user?.toLowerCase() === process.env.MC_PLAYER.toLowerCase()
