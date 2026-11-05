@@ -66,8 +66,8 @@ async function renderBots() {
       </div>
       <div class="bot-btns">
         <button class="btn ${on ? 'danger' : 'primary'} small" data-act="${on ? 'stop' : 'play'}">${on ? '⏹ Stop' : '▶ Graj'}</button>
-        <button class="btn ghost small" data-act="edit">⚙</button>
-        <button class="btn ghost small danger-text" data-act="del">🗑</button>
+        <button class="btn ghost small" data-act="edit" title="Nick, świat, port, ustawienia">📝 Edytuj</button>
+        <button class="btn ghost small danger-text" data-act="del" title="Usuwa bota i jego pamięć">🗑 Usuń</button>
       </div>
     </div>`
   }).join('') + `<div class="bot-card new" data-act="new"><div class="avatar plus">＋</div><div class="bot-info"><div class="bot-name">Nowy bot</div>
@@ -82,12 +82,7 @@ $('botGrid').addEventListener('click', async e => {
   const id = card.dataset.id
   if (act === 'new' || card.classList.contains('new')) return openModal(null)
   if (act === 'edit') return openModal(profile(id))
-  if (act === 'del') {
-    if (!confirm(`Usunąć bota ${profile(id).name}? Zniknie też jego pamięć (baza, punkty, budowle).`)) return
-    await B.deleteProfile(id)
-    if (selected === id) selectBot(null)
-    return renderBots()
-  }
+  if (act === 'del') return deleteBot(id)
   if (act === 'stop') return B.stop(id)
   if (act === 'play') return playBot(id)
   selectBot(id)
@@ -98,6 +93,24 @@ $('botGrid').addEventListener('dblclick', e => {
   if (card && card.dataset.id && !e.target.closest('button')) playBot(card.dataset.id)
 })
 $('btnStopAll').addEventListener('click', () => running.forEach(id => B.stop(id)))
+
+// usuwa bota (dzialajacego najpierw wylacza) razem z jego pamiecia
+async function deleteBot(id) {
+  const p = profile(id)
+  if (!p) return
+  const on = running.has(id)
+  if (!confirm(`Usunąć bota ${p.name}?${on ? ' Najpierw zostanie wyłączony.' : ''}\nZniknie też jego pamięć (baza, punkty, budowle). Projekty i własne komendy zostają.`)) return
+  await B.deleteProfile(id)
+  running.delete(id)
+  statuses.delete(id)
+  logs.delete(id)
+  closeModal()
+  profiles = await B.profiles()
+  if (selected === id) selectBot(profiles.find(x => running.has(x.id))?.id || profiles[0]?.id || null)
+  await renderBots()
+  renderTabs()
+  toast(`Usunięto bota ${p.name}`, 'ok')
+}
 
 async function playBot(id) {
   selectBot(id)
@@ -152,6 +165,7 @@ function renderTop() {
   $('btnStart').classList.toggle('danger', on)
   $('btnStart').classList.toggle('primary', !on)
   $('btnStart').disabled = !p
+  $('btnEdit').disabled = !p
   if (!p) { $('connDot').className = 'dot off'; $('connText').textContent = 'Wybierz bota'; $('taskText').textContent = ''; return }
   $('connDot').className = 'dot ' + (!on ? 'off' : s?.connected ? 'on' : 'wait')
   $('connText').textContent = `${p.name}: ` + (!on ? 'wyłączony' : s?.connected ? 'w grze' : 'łączy…')
@@ -163,6 +177,7 @@ $('btnStart').addEventListener('click', async () => {
   playBot(selected)
 })
 $('btnStop').addEventListener('click', () => send('stop'))
+$('btnEdit').addEventListener('click', () => { if (selected) openModal(profile(selected)) })
 
 B.on('bot-state', s => {
   if (s.running) running.add(s.id)
@@ -432,6 +447,8 @@ function openModal(p) {
     else el.value = d[el.name] ?? ''
   }
   form.elements.id.value = p ? p.id : ''
+  $('btnDelete').classList.toggle('hidden', !p)
+  $('btnSavePlay').textContent = p && running.has(p.id) ? 'Zapisz i uruchom ponownie' : 'Zapisz i graj'
   setMode(d.mode || 'lan')
   $('formMsg').textContent = ''
   $('modal').classList.remove('hidden')
@@ -456,7 +473,18 @@ async function saveForm() {
   return res.id
 }
 form.addEventListener('submit', async e => { e.preventDefault(); const id = await saveForm(); if (id) selectBot(id) })
-$('btnSavePlay').addEventListener('click', async () => { const id = await saveForm(); if (id) playBot(id) })
+$('btnSavePlay').addEventListener('click', async () => {
+  const wasOn = running.has(form.elements.id.value)
+  const id = await saveForm()
+  if (!id) return
+  if (wasOn) {
+    // nowe ustawienia polaczenia dzialaja dopiero po ponownym uruchomieniu bota
+    await B.stop(id)
+    for (let i = 0; i < 30 && running.has(id); i++) await new Promise(r => setTimeout(r, 100))
+  }
+  playBot(id)
+})
+$('btnDelete').addEventListener('click', () => { const id = form.elements.id.value; if (id) deleteBot(id) })
 
 // ---------- aktualizacje ----------
 B.on('update', u => {

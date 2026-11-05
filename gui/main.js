@@ -174,10 +174,16 @@ ipcMain.handle('profiles:save', (e, p) => {
   saveProfiles([...list, { ...BOT_DEFAULTS, ...p, id, created: Date.now() }])
   return { ok: true, id }
 })
-ipcMain.handle('profiles:delete', (e, id) => {
-  stopBot(id)
+ipcMain.handle('profiles:delete', async (e, id) => {
+  // dzialajacy bot ma swoj folder jako katalog roboczy - na Windows folderu nie da sie usunac, zanim proces sie nie zakonczy
+  const entry = procs.get(id)
+  if (entry) {
+    const exited = new Promise(resolve => entry.proc.once('exit', resolve))
+    stopBot(id)
+    await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 3000))])
+  }
   saveProfiles(loadProfiles().filter(x => x.id !== id))
-  try { fs.rmSync(botDir(id), { recursive: true, force: true }) } catch {}
+  try { fs.rmSync(botDir(id), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }) } catch {}
   return { ok: true }
 })
 // dane bota z poprzednich gier (punkty, budowle, ostatnie zadanie) - do pokazania na karcie

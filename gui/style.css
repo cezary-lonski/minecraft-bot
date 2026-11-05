@@ -329,3 +329,6 @@ textarea:focus, .row input:focus { outline: none; border-color: var(--green); }
 .macro-head code { font-size: 15px; }
 .macro ol { margin: 8px 0; padding-left: 20px; color: #cfd3e0; font-size: 13px; }
 @media (max-width: 1150px) { .creator, .macro-wrap { grid-template-columns: 1fr; } }
+.push-right { margin-left: auto; }
+.bot-btns .btn { white-space: nowrap; }
+.btn:disabled { opacity: .45; cursor: default; }
