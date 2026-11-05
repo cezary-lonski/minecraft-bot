@@ -316,8 +316,9 @@
         <label>Jedz, gdy głód/zdrowie poniżej<input name="eatBelow" type="number" min="2" max="20"></label>
         <label>Odstęp między wiadomościami (ms)<input name="chatDelay" placeholder="puste = domyślnie"></label>
         <label class="check"><input name="autoHelp" type="checkbox"> Sam pomaga innym botom</label>
-        <label class="check wide"><input name="aiChat" type="checkbox"><span>🤖 <b>AI w grze</b> – gdy napiszesz jego nick (np. „Claude, zbuduj coś fajnego obok domu”)
-          albo „ai …”, odpowiada na czacie i sam działa: wydaje sobie komendy, projektuje i stawia budowle, uczy się komend</span></label>
+        <label class="check wide"><input name="aiChat" type="checkbox"><span>🤖 <b>AI w grze</b> – wszystko, co do niego napiszesz w grze, trafia do AI (np. „zbuduj coś fajnego obok domu”):
+          AI odpowiada na czacie i samo wydaje mu komendy, projektuje i stawia budowle, uczy go komend. Bot sam reaguje tylko na „stop”
+          i odpowiedzi tak/nie. Komendy wpisane w programie idą prosto do bota.</span></label>
         <label class="wide"><span>Klucz AI (wspólny dla wszystkich botów) – Gemini z <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> (darmowy limit) albo Claude</span>
           <input id="formAiKey" type="password" autocomplete="off" placeholder="AQ.… / AIza… / sk-ant-…"></label>
         <label class="check srv-only"><input name="rtp" type="checkbox"> Używaj /rtp, gdy brak surowca</label>

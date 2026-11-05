@@ -115,7 +115,10 @@ Klucze są zapisane na komputerze w postaci zaszyfrowanej przez Windows i nie tr
 podpowiada komendy z listy, a Kreator budowli działa normalnie.
 
 ### AI w grze
-W ustawieniach bota zaznacz **🤖 AI w grze** (i wklej klucz, jeśli jeszcze go nie ma), potem uruchom bota. Na czacie gry:
+W ustawieniach bota zaznacz **🤖 AI w grze** (i wklej klucz, jeśli jeszcze go nie ma), potem uruchom bota.
+**W trybie AI wszystko, co piszesz do bota w grze, trafia do AI** — także `buduj coś-tam`: AI samo decyduje, jakie komendy wydać
+botowi. Bot sam reaguje tylko na `stop` i odpowiedzi na swoje pytania (`tak`/`nie`…). Komendy wpisane w programie (panel bota)
+idą prosto do bota. Na czacie gry:
 - w świecie LAN wystarczy pisać normalnie (np. `halo`, `jak pokonać smoka?`) — wiadomość od Ciebie, która nie jest komendą, idzie do AI;
   działa też `ai <pytanie>`,
 - `<nick bota>, <prośba>` — np. `Claude, zbuduj obok domu coś fajnego` albo `Claude, naucz się zbierać jabłka`.

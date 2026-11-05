@@ -4279,6 +4279,7 @@ bot.on('messagestr', m => {
     if (from.toLowerCase() === mine) return
     if (!['me', 'ja', mine].includes(to.toLowerCase())) return
     if (!isAllowed(from)) { console.log(`[bot] ignoruje /msg od ${from}`); return }
+    if (routeToAi(from, text, true)) return
     handle(from, text, true)
     return
   }
@@ -4308,8 +4309,9 @@ bot.on('chat', (user, msg) => {
   }
   // komunikat serwera po komendzie gracza, np. "[Czarkonator: Teleported Czarkonator to Tester]"
   if (/\]$/.test(msg) && !msg.includes('[')) return
-  // "ai ..." - zawsze pytanie do AI; "<nick>, ..." - komenda dla tego bota, a jak nie komenda - pytanie do AI
-  if (AI_ON && /^ai\b[,:]?\s+/i.test(msg) && aiAllowed(user)) { askAi(user, msg.replace(/^ai\b[,:]?\s+/i, '')); return }
+  // tryb AI: wszystko od gracza idzie do AI (ono samo wydaje botowi komendy)
+  if (routeToAi(user, msg, false)) return
+  // "<nick>, ..." - komenda dla tego bota
   const nickRe = new RegExp('^@?' + bot.username + '\\b[,:!]?\\s*', 'i')
   if (nickRe.test(msg)) {
     const rest = msg.replace(nickRe, '').trim()
@@ -4329,6 +4331,19 @@ let aiPending = null
 const aiAllowed = user => !!user && (LAN
   ? (!process.env.MC_PLAYER || user.toLowerCase() === process.env.MC_PLAYER.toLowerCase())
   : allowed.has(user.toLowerCase()))
+// Tryb AI: kazda wiadomosc gracza (czat albo /msg) trafia do AI, takze "buduj cos-tam" - bot sam jej nie wykonuje.
+// Bot przejmuje tylko "stop" (zeby zawsze dalo sie go zatrzymac) i odpowiedzi na swoje pytania (tak / nie...).
+// Komendy z programu (panel bota) ida prosto do bota. Zwraca true, gdy wiadomosc poszla do AI albo zostala obsluzona.
+function routeToAi(user, msg, whisper) {
+  if (!AI_ON || !aiAllowed(user)) return false
+  const t = stripPl(String(msg)).toLowerCase().trim()
+  if (/^(stop|zostan|stoj|czekaj)!?$/.test(t)) return false
+  if (pendingQuestion && pendingQuestion.options.some(([re]) => re.test(t))) return false
+  const nickRe = new RegExp('^@?' + bot.username + '\\b[,:!]?\\s*', 'i')
+  const text = String(msg).replace(nickRe, '').replace(/^ai\b[,:]?\s*/i, '').trim()
+  if (text) askAi(user, text, whisper)
+  return true
+}
 function askAi(user, text, whisper = false) {
   if (aiPending && Date.now() - aiPending.at < 120000) { say('Chwila, jeszcze mysle nad poprzednim pytaniem.'); return }
   aiPending = { id: Date.now().toString(36), at: Date.now(), user, whisper }
