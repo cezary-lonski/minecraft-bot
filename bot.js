@@ -2134,8 +2134,9 @@ function buildEta() {
   const done = b.placed
   const left = Math.max(0, b.total - done)
   const secs = (Date.now() - b.startedAt) / 1000
-  const measured = done >= 15 && secs >= 20
-  const rate = measured ? done / secs : (isCreative() ? 2.5 : 0.7) // bloki na sekunde
+  const made = done - (b.basePlaced || 0)
+  const measured = b.phase === 'budowa' && made >= 15 && secs >= 20
+  const rate = measured ? made / secs : (isCreative() ? 2.5 : 0.7) // bloki na sekunde
   return { done, total: b.total, left, pct: Math.min(100, Math.round(done * 100 / Math.max(1, b.total))), etaSec: left / Math.max(rate, 0.01), measured, rate }
 }
 function fmtDuration(sec) {
@@ -2150,8 +2151,14 @@ function timeCommand() {
     say(running ? `Teraz: ${currentTask}. Czas umiem szacowac przy budowie.` : 'Nic nie buduje.')
     return
   }
+  const b = currentBuild
+  if (b.phase === 'teren') {
+    const tp = b.terrainTotal ? Math.round(b.terrainDone * 100 / b.terrainTotal) : 0
+    say(`${b.label}: przygotowuje teren (${b.terrainDone}/${b.terrainTotal} blokow do wykopania, ${tp}%), potem stawiam ${b.total} blokow - to potrwa ok. ${fmtDuration(e.etaSec)}.`)
+    return
+  }
   const left = e.left ? `Zostalo ok. ${fmtDuration(e.etaSec)}${e.measured ? '' : ' (szacunek na start, dokladniej za chwile)'}.` : 'Koncze!'
-  say(`${currentBuild.label}: ${e.done}/${e.total} blokow (${e.pct}%). ${left}`)
+  say(`${b.label}: ${e.done}/${e.total} blokow (${e.pct}%). ${left}`)
 }
 
 // materialy aktualnej budowy - automatyczne sprzatanie ekwipunku (makeRoom) ich nie wyrzuca
@@ -2377,27 +2384,39 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
     if (dirtId !== undefined) buildMoves.scafoldingBlocks = [dirtId]
     const total = cells.filter(c => c.block !== 'air').length
     let placed = 0
-    currentBuild = { label, total, startedAt: Date.now(), get placed() { return placed } }
+    currentBuild = { label, total, phase: 'teren', terrainDone: 0, terrainTotal: 0, startedAt: Date.now(), basePlaced: 0, get placed() { return placed } }
     let failed = 0
 
     // 1) teren: od gory wykopujemy to, co przeszkadza (ziemia, trawa, kamien w obrysie)
     say(`Buduje ${label} (${total} blokow). Najpierw przygotowuje teren.`)
     bot.pathfinder.setMovements(terrainMoves)
-    for (const c of [...cells].sort((a, b) => b.y - a.y)) {
+    // najpierw liczymy, co trzeba wykopac - zeby "czas" pokazywal postep tez przy przygotowaniu terenu
+    const toClear = [...cells].sort((a, b) => b.y - a.y).filter(c => {
+      const b = bot.blockAt(c.pos)
+      return b && b.boundingBox === 'block' && !sameKind(b.name, c.block) && !(opts.decor && c.block !== 'air') // wystroj nie burzy tego, co juz stoi
+    })
+    currentBuild.terrainTotal = toClear.length
+    for (const c of toClear) {
       if (!running) return false
+      currentBuild.terrainDone++
       const b = bot.blockAt(c.pos)
       if (!b || b.boundingBox !== 'block' || sameKind(b.name, c.block)) continue
-      if (opts.decor && c.block !== 'air') continue // wystroj nie burzy tego, co juz stoi
-      setStatus(`przygotowuje teren pod ${label}`)
+      setStatus(`przygotowuje teren pod ${label}: ${currentBuild.terrainDone}/${toClear.length}`)
       try { await goNearCell(c.pos); await clearBlock(c.pos) } catch (e) { console.log('[bot] teren:', e.message) }
     }
+    // od teraz liczy sie tempo stawiania
+    // to, co juz stoi (np. po "kontynuuj"), liczy sie od razu - procent jest prawdziwy, a tempo liczymy tylko z nowych blokow
+    const counted = new Set()
+    for (const c of cells) if (c.block !== 'air' && sameKind(bot.blockAt(c.pos)?.name || '', c.block)) counted.add(posKey(c.pos))
+    placed = counted.size
+    Object.assign(currentBuild, { phase: 'budowa', startedAt: Date.now(), basePlaced: placed })
 
     // 2) stawianie warstwami od dolu; w warstwie kilka przejsc - blok musi miec sie o co oprzec
     const layers = [...new Set(cells.map(c => c.y))].sort((a, b) => a - b)
     // jeden blok: 'done' (stoi), 'retry' (sprobowac w nastepnym przejsciu), 'drop' (pominac)
     const placeOne = async (c, first, where) => {
       const cur = bot.blockAt(c.pos)
-      if (cur && sameKind(cur.name, c.block)) { placed++; return 'done' }
+      if (cur && sameKind(cur.name, c.block)) { if (!counted.has(posKey(c.pos))) { counted.add(posKey(c.pos)); placed++ } return 'done' }
       if (opts.decor && cur && cur.name !== 'air' && cur.boundingBox !== 'empty') return 'drop' // zajete - zostawiamy
       if (c.block === 'painting') { if (isCreative() && !invItemFor('painting')) await creativeRefill('painting'); if (await hangPainting(c, front)) placed++; return 'drop' }
       if (first && !opts.decor) await fillBelow(c.pos)
@@ -2411,7 +2430,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
       try {
         await goNearCell(c.pos, c.facing && worldDir(front, c.facing))
         await placeBlockAt(it.name, c.pos, c.attach && worldDir(front, c.attach))
-        placed++
+        if (!counted.has(posKey(c.pos))) { counted.add(posKey(c.pos)); placed++ }
         if (CONTAINERS.includes(c.block)) { ownChests.add(posKey(c.pos)); saveJson('chests.json', [...ownChests]) }
         return 'done'
       } catch (e) {
@@ -4404,6 +4423,7 @@ function routeToAi(user, msg, whisper) {
   if (!AI_ON || !aiAllowed(user)) return false
   const t = stripPl(String(msg)).toLowerCase().trim()
   if (/^(stop|zostan|stoj|czekaj)!?$/.test(t)) return false
+  if (/^(czas|ile jeszcze|ile zostalo|kiedy skonczysz|ile czasu|eta|status)??$/.test(t)) return false // szybkie informacje - prosto od bota
   if (pendingQuestion && pendingQuestion.options.some(([re]) => re.test(t))) return false
   const nickRe = new RegExp('^@?' + bot.username + '\\b[,:!]?\\s*', 'i')
   const text = String(msg).replace(nickRe, '').replace(/^ai\b[,:]?\s*/i, '').trim()
