@@ -5,7 +5,7 @@
 const { app, BrowserWindow, ipcMain, shell, safeStorage } = require('electron')
 const path = require('path')
 const fs = require('fs')
-const { spawn } = require('child_process')
+const { spawn, spawnSync } = require('child_process')
 const Designer = require('./designer')
 const { createAssistant } = require('./ai')
 
@@ -21,7 +21,7 @@ function moveDataNextToProgram() {
   if (/^c:/i.test(exeDir)) return
   const dataDir = path.basename(exeDir).toLowerCase() === 'program' ? path.join(path.dirname(exeDir), 'Dane') : exeDir + ' - Dane'
   const oldDir = app.getPath('userData')
-  // "Local State" trzeba skopiowac - jest w nim klucz, ktorym system szyfruje zapisane klucze API
+  // kopiujemy tez "Local State" - starsze wersje szyfrowaly nim klucze API (safeStorage)
   const ours = d => ['bots.json', 'app-settings.json', 'bots', 'projekty', 'komendy'].some(m => fs.existsSync(path.join(d, m)))
   try {
     if (!ours(dataDir) && ours(oldDir)) {
@@ -275,14 +275,42 @@ ipcMain.handle('commands:save', (e, c) => saveCommand(c))
 ipcMain.handle('commands:delete', (e, key) => { try { fs.unlinkSync(fileOf(COMMANDS_DIR, key)) } catch {} send('commands-changed', {}); return { ok: true } })
 
 // ---------- asystent AI ----------
-// klucze API szyfrowane przez system (safeStorage), zapisane w ustawieniach programu; Gemini albo Claude
+// Klucze API (Gemini albo Claude) w ustawieniach programu, zaszyfrowane przez Windows (DPAPI, konto uzytkownika) przez PowerShell.
+// Dzialaja po przeniesieniu danych i po naglym zamknieciu programu - safeStorage Electrona gubil klucz, gdy program
+// nie zamknal sie poprawnie (jego klucz trafia do "Local State" dopiero przy wyjsciu). Stare wpisy z safeStorage nadal czytamy.
 const KEY_FIELD = { claude: 'apiKeyEnc', gemini: 'geminiKeyEnc' }
 const getProvider = () => (appSettings().aiProvider === 'claude' ? 'claude' : 'gemini')
-function getKey(provider = getProvider()) {
-  const enc = appSettings()[KEY_FIELD[provider]]
-  if (!enc) return null
-  try { return safeStorage.decryptString(Buffer.from(enc, 'base64')) } catch { return null }
+function dpapi(op, text) {
+  const ps = op === 'protect'
+    ? "$i=[Console]::In.ReadToEnd();Add-Type -AssemblyName System.Security;[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($i),$null,'CurrentUser'))"
+    : "$i=[Console]::In.ReadToEnd();Add-Type -AssemblyName System.Security;[Console]::Out.Write([Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($i.Trim()),$null,'CurrentUser')))"
+  // klucz idzie przez wejscie procesu, nie przez linie polecen
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { input: text, encoding: 'utf8', windowsHide: true, timeout: 20000 })
+  if (r.status !== 0) throw new Error(String(r.stderr || r.error || 'DPAPI').trim().slice(0, 200))
+  return r.stdout.trim()
 }
+const encryptKey = k => process.platform === 'win32' ? 'dpapi:' + dpapi('protect', k) : safeStorage.encryptString(k).toString('base64')
+function decryptKey(v) {
+  if (!v) return null
+  try {
+    return v.startsWith('dpapi:') ? dpapi('unprotect', v.slice(6)) : safeStorage.decryptString(Buffer.from(v, 'base64'))
+  } catch { return null }
+}
+// odszyfrowane klucze trzymamy w pamieci; klucz rozpoznajemy po poczatku, niezaleznie od pola, w ktorym lezy
+let keyCache = null
+function keys() {
+  if (keyCache) return keyCache
+  const s = appSettings()
+  const out = { gemini: null, claude: null }
+  for (const f of ['geminiKeyEnc', 'apiKeyEnc']) {
+    const k = decryptKey(s[f])
+    const p = k && providerOfKey(k)
+    if (p && !out[p]) out[p] = k
+  }
+  keyCache = out
+  return out
+}
+const getKey = (provider = getProvider()) => keys()[provider]
 const assistant = createAssistant({
   getProvider,
   getKey,
@@ -311,11 +339,23 @@ ipcMain.handle('ai:setProvider', (e, p) => { writeJson(APP_SETTINGS_FILE, { ...a
 ipcMain.handle('ai:setKey', (e, key, provider) => {
   const k = String(key || '').trim()
   const p = provider || providerOfKey(k) || getProvider()
-  if (!k) { writeJson(APP_SETTINGS_FILE, { ...appSettings(), [KEY_FIELD[p]]: null }); return { ok: true, provider: p } }
-  if (!providerOfKey(k)) return { ok: false, error: 'To nie wygląda na klucz Gemini (AIza… / AQ.…) ani Claude (sk-ant-…).' }
-  if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'System nie pozwala bezpiecznie zapisać klucza.' }
+  // pola, w ktorych lezy klucz danego silnika (starsza wersja zapisywala klucz Gemini w polu Claude)
+  const fieldsOf = prov => Object.values(KEY_FIELD).filter(f => f === KEY_FIELD[prov] || providerOfKey(decryptKey(appSettings()[f]) || '') === prov)
+  if (!k) {
+    const s = appSettings()
+    for (const f of fieldsOf(p)) s[f] = null
+    writeJson(APP_SETTINGS_FILE, s)
+    keyCache = null
+    return { ok: true, provider: p }
+  }
   const real = providerOfKey(k)
-  writeJson(APP_SETTINGS_FILE, { ...appSettings(), [KEY_FIELD[real]]: safeStorage.encryptString(k).toString('base64'), aiProvider: real })
+  if (!real) return { ok: false, error: 'To nie wygląda na klucz Gemini (AIza… / AQ.…) ani Claude (sk-ant-…).' }
+  let enc
+  try { enc = encryptKey(k) } catch (err) { return { ok: false, error: 'Nie udało się zaszyfrować klucza: ' + err.message } }
+  const s = appSettings()
+  for (const f of fieldsOf(real)) s[f] = null
+  writeJson(APP_SETTINGS_FILE, { ...s, [KEY_FIELD[real]]: enc, aiProvider: real })
+  keyCache = null
   return { ok: true, provider: real }
 })
 ipcMain.handle('ai:chat', (e, text, botId) => assistant.chat(text, { conv: 'app', botId }))
