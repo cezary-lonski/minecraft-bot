@@ -8,6 +8,7 @@ const fs = require('fs')
 const { spawn, spawnSync } = require('child_process')
 const Designer = require('./designer')
 const { createAssistant } = require('./ai')
+const { createFriends } = require('./friends')
 
 let autoUpdater = null
 try { autoUpdater = require('electron-updater').autoUpdater } catch { /* brak w trybie deweloperskim */ }
@@ -258,6 +259,24 @@ ipcMain.handle('skin:import', async (e, id) => {
 ipcMain.handle('skin:remove', (e, id) => { try { fs.unlinkSync(skinFile(id)) } catch {} rebuildSkinPack(); return { ok: true } })
 ipcMain.handle('skin:openPacks', () => { const d = path.dirname(PACK_DIR); fs.mkdirSync(d, { recursive: true }); shell.openPath(d); return d })
 
+// ---------- znajomi i czat w sieci lokalnej ----------
+const FRIENDS_FILE = path.join(DATA, 'znajomi.json')
+const friends = createFriends({
+  store: { get: () => readJson(FRIENDS_FILE, {}), set: patch => writeJson(FRIENDS_FILE, { ...readJson(FRIENDS_FILE, {}), ...patch }) },
+  emit: ev => send('friends', ev),
+  version: app.getVersion()
+})
+ipcMain.handle('friends:state', () => friends.state())
+ipcMain.handle('friends:start', async () => { try { return await friends.start() } catch (e) { return { ok: false, error: 'Nie udało się włączyć: ' + e.message } } })
+ipcMain.handle('friends:stop', () => friends.stop())
+ipcMain.handle('friends:setNick', (e, nick) => friends.setNick(nick))
+ipcMain.handle('friends:invite', (e, id) => friends.invite(id))
+ipcMain.handle('friends:accept', (e, id) => friends.acceptInvite(id))
+ipcMain.handle('friends:reject', (e, id) => friends.rejectInvite(id))
+ipcMain.handle('friends:remove', (e, id) => friends.removeFriend(id))
+ipcMain.handle('friends:chat', (e, id, text) => friends.chat(id, text))
+ipcMain.handle('friends:history', (e, id) => friends.history(id))
+
 // komenda od AI: bot odsyla (@@AICMDRES), czy ja zrozumial - AI dostaje to jako wynik narzedzia i moze sie poprawic
 const aiCmdWaiters = new Map()
 let aiCmdSeq = 0
@@ -504,6 +523,7 @@ ipcMain.handle('update:install', () => {
 app.whenReady().then(() => {
   createWindow()
   win.webContents.once('did-finish-load', setupUpdates)
+  win.webContents.once('did-finish-load', () => friends.autoStart()) // widocznosc w sieci, jesli byla wlaczona
   // MB_SCREENSHOT=plik.png: zrzut okna po zaladowaniu i wyjscie (do sprawdzania wygladu bez klikania)
   if (process.env.MB_SCREENSHOT) {
     win.webContents.on('console-message', e => console.log('[okno]', e.message))
@@ -516,4 +536,4 @@ app.whenReady().then(() => {
   }
 })
 app.on('window-all-closed', () => { stopAll(); app.quit() })
-app.on('before-quit', stopAll)
+app.on('before-quit', () => { stopAll(); friends.stop(true) })

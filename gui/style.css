@@ -343,3 +343,19 @@ textarea:focus, .row input:focus { outline: none; border-color: var(--green); }
 .skin-text { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .skin-text .row { gap: 6px; margin-top: 4px; }
 canvas.skin-avatar { image-rendering: pixelated; background: #12131a; }
+/* znajomi */
+.friends-wrap { display: grid; grid-template-columns: 320px 1fr; gap: 14px; align-items: stretch; }
+.fr-side h4 { margin: 14px 0 6px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+.fr-me { display: flex; align-items: center; gap: 8px; }
+.fr-me .btn { margin-left: auto; }
+.fr-list { display: flex; flex-direction: column; gap: 4px; }
+.fr-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; background: var(--panel2); border: 1px solid var(--line); text-align: left; cursor: pointer; }
+.fr-item .btn, .fr-item .muted { margin-left: auto; }
+.fr-item.sel { border-color: var(--green); }
+.fr-item .badge { margin-left: auto; }
+.fr-req { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 8px; background: #26301f; border: 1px solid #3e5a2c; margin-top: 10px; }
+.fr-chat { display: flex; flex-direction: column; height: calc(100vh - 120px); min-height: 380px; }
+.fr-chat-head { display: flex; align-items: baseline; gap: 10px; }
+.fr-chat-head .btn { margin-left: auto; }
+.fr-time { margin-top: 2px; font-size: 10px; text-align: right; }
+@media (max-width: 1000px) { .friends-wrap { grid-template-columns: 1fr; } }

@@ -35,6 +35,7 @@ Wchodzi do gry jako osobny gracz i wykonuje polecenia wydawane **po polsku na cz
 ## Spis treści
 - [Najprościej: program dla Windows](#najprościej-program-dla-windows)
 - [Skin bota](#skin-bota)
+- [Znajomi i czat](#znajomi-i-czat)
 - [Kilka botów naraz](#kilka-botów-naraz)
 - [Kreator budowli](#kreator-budowli)
 - [Asystent AI](#asystent-ai)
@@ -77,6 +78,13 @@ albo klasycznej), wybrany na podstawie nicku. Program sam wylicza, który to ski
 wystarczy **F3+T**. Skin widzisz w swojej grze; inni gracze zobaczą go, jeśli też włączą tę paczkę.
 - Kształt rąk (szczupłe / klasyczne) zależy od nicku — program ostrzeże, jeśli skin ma inne ręce niż bot.
 - Gracze bez konta z tym samym domyślnym skinem (np. drugi bot) też go dostaną — program o tym ostrzega.
+
+## Znajomi i czat
+Zakładka **💬 Znajomi**: wpisz swój nick i kliknij **Włącz**. Launchery w **tej samej sieci** (np. na kółku albo w domu na jednym
+Wi-Fi) widzą się nawzajem — w sekcji „W sieci” kliknij **＋ Dodaj**, a druga osoba akceptuje zaproszenie. Potem możecie pisać na czacie.
+- Nie ma żadnego serwera: wiadomości idą prosto z komputera na komputer, nic nie przechodzi przez internet.
+- Inni widzą tylko Twój nick i to, że masz włączony launcher. Pisać można tylko ze znajomymi. **Wyłącz** — przestajesz być widoczny.
+- Za pierwszym razem Windows może zapytać o dostęp do sieci — zezwól (sieci prywatne).
 
 ## Kilka botów naraz
 W zakładce **Graj** każdy bot ma własną kartę i własną pamięć świata: bazę, punkty, postawione budowle i przerwane zadanie

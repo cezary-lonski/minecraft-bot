@@ -22,6 +22,7 @@
       <button class="nav" data-view="creator">🧱 Kreator budowli</button>
       <button class="nav" data-view="ai">🤖 Asystent AI</button>
       <button class="nav" data-view="macros">⚡ Moje komendy</button>
+      <button class="nav" data-view="friends">💬 Znajomi <span id="friendsDot" class="dot hidden"></span></button>
       <button class="nav" data-view="commands">📜 Komendy</button>
       <button class="nav" data-view="updates">⬆ Aktualizacje <span id="updDot" class="dot hidden"></span></button>
     </nav>
@@ -264,6 +265,37 @@
       </div>
     </section>
 
+    <!-- ZNAJOMI -->
+    <section class="view" id="view-friends">
+      <div class="friends-wrap">
+        <div class="card fr-side">
+          <h3>💬 Znajomi</h3>
+          <div id="frSetup">
+            <p class="muted small">Launchery w tej samej sieci (np. na kółku albo w domu na jednym Wi-Fi) widzą się nawzajem.
+              Wiadomości idą prosto z komputera na komputer – nic nie przechodzi przez internet. Inni widzą tylko Twój nick.</p>
+            <div class="row"><input id="frNick" placeholder="Twój nick (np. Czarek)" maxlength="24"><button class="btn primary" id="frOn">Włącz</button></div>
+            <p class="hint">Za pierwszym razem Windows może zapytać o dostęp do sieci – zezwól (sieci prywatne).</p>
+          </div>
+          <div id="frMain" class="hidden">
+            <div class="fr-me"><span class="dot on"></span> Widoczny jako <b id="frMeNick"></b> <button class="btn ghost small" id="frOff">Wyłącz</button></div>
+            <div id="frRequests"></div>
+            <h4>Znajomi</h4>
+            <div id="frFriends" class="fr-list"></div>
+            <h4>W sieci</h4>
+            <div id="frOthers" class="fr-list"></div>
+          </div>
+        </div>
+        <div class="card fr-chat">
+          <div class="fr-chat-head"><h3 id="frChatTitle">Wybierz znajomego</h3><button class="btn ghost small hidden" id="frRemove">Usuń ze znajomych</button></div>
+          <div id="frMsgs" class="ai-msgs"><p class="muted">Kliknij znajomego po lewej, żeby pisać.</p></div>
+          <div class="ai-input">
+            <textarea id="frText" rows="2" placeholder="Napisz wiadomość… (Enter – wyślij)" disabled></textarea>
+            <button id="frSend" class="btn primary" disabled>Wyślij</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- KOMENDY -->
     <section class="view" id="view-commands">
       <input id="cmdSearch" class="search" placeholder="Szukaj komendy, np. kilof, baza, jedzenie, pomoc…">
@@ -351,5 +383,6 @@
   <script src="designer.js"></script>
   <script src="app.js"></script>
   <script src="creator.js"></script>
+  <script src="friends-ui.js"></script>
 </body>
 </html>

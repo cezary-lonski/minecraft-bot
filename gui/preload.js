@@ -24,6 +24,17 @@ contextBridge.exposeInMainWorld('bridge', {
   commands: () => ipcRenderer.invoke('commands:list'),
   saveCommand: c => ipcRenderer.invoke('commands:save', c),
   deleteCommand: key => ipcRenderer.invoke('commands:delete', key),
+  // znajomi i czat w sieci lokalnej
+  friends: () => ipcRenderer.invoke('friends:state'),
+  friendsStart: () => ipcRenderer.invoke('friends:start'),
+  friendsStop: () => ipcRenderer.invoke('friends:stop'),
+  friendsNick: nick => ipcRenderer.invoke('friends:setNick', nick),
+  friendInvite: id => ipcRenderer.invoke('friends:invite', id),
+  friendAccept: id => ipcRenderer.invoke('friends:accept', id),
+  friendReject: id => ipcRenderer.invoke('friends:reject', id),
+  friendRemove: id => ipcRenderer.invoke('friends:remove', id),
+  friendChat: (id, text) => ipcRenderer.invoke('friends:chat', id, text),
+  friendHistory: id => ipcRenderer.invoke('friends:history', id),
   // skiny botow
   skinInfo: id => ipcRenderer.invoke('skin:info', id),
   skinSlot: name => ipcRenderer.invoke('skin:slot', name),
@@ -38,7 +49,7 @@ contextBridge.exposeInMainWorld('bridge', {
   aiChat: (text, botId) => ipcRenderer.invoke('ai:chat', text, botId),
   aiReset: () => ipcRenderer.invoke('ai:reset'),
   on: (channel, cb) => {
-    if (!['log', 'status', 'bot-state', 'update', 'team', 'ai-event', 'designs-changed', 'commands-changed'].includes(channel)) return
+    if (!['log', 'status', 'bot-state', 'update', 'team', 'ai-event', 'designs-changed', 'commands-changed', 'friends'].includes(channel)) return
     ipcRenderer.on(channel, (e, data) => cb(data))
   }
 })
