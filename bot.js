@@ -1267,7 +1267,7 @@ const HELP = [
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
   'Zespol: pomoz [bot], pomoc <kto> <komu> (np. pomoc Kopacz Claude), popros <bot> o <co> [ile], zabij <gracz|mob|imie>',
-  'Po bledzie (np. zabraklo blokow): daj mu brakujace rzeczy i napisz kontynuuj',
+  'Po bledzie (np. zabraklo blokow): daj mu brakujace rzeczy i napisz kontynuuj. Ile do konca budowy: czas',
   'Wlasne: projekty, buduj <projekt>, moje komendy, naucz sie <nazwa>: krok; krok, zapomnij komende <nazwa>',
   'Inne: status, co robisz, diag, chat <tekst>, permisja <nick>, odbierz <nick>, permisje'
 ]
@@ -2124,6 +2124,36 @@ async function gatherMaterials(cells, label) {
   return running
 }
 
+// ---------- szacowany czas budowy ("czas") ----------
+// tempo liczone z tego, ile blokow naprawde przybylo od poczatku stawiania (razem z przerwami na zbieranie materialu);
+// na samym poczatku - typowe tempo (kreatywny szybciej)
+let currentBuild = null
+function buildEta() {
+  const b = currentBuild
+  if (!b) return null
+  const done = b.placed
+  const left = Math.max(0, b.total - done)
+  const secs = (Date.now() - b.startedAt) / 1000
+  const measured = done >= 15 && secs >= 20
+  const rate = measured ? done / secs : (isCreative() ? 2.5 : 0.7) // bloki na sekunde
+  return { done, total: b.total, left, pct: Math.min(100, Math.round(done * 100 / Math.max(1, b.total))), etaSec: left / Math.max(rate, 0.01), measured, rate }
+}
+function fmtDuration(sec) {
+  if (sec < 90) return `${Math.max(1, Math.round(sec / 5) * 5)} s`
+  if (sec < 5400) return `${Math.round(sec / 60)} min`
+  return `${Math.floor(sec / 3600)} h ${Math.round((sec % 3600) / 60)} min`
+}
+function timeCommand() {
+  const e = buildEta()
+  if (!e) {
+    if (running && /budow|wystroj|pomoc w budowie|budowa/i.test(currentTask || '')) { say('Jeszcze przygotowuje budowe (material, teren) - czas podam, gdy zaczne stawiac bloki.'); return }
+    say(running ? `Teraz: ${currentTask}. Czas umiem szacowac przy budowie.` : 'Nic nie buduje.')
+    return
+  }
+  const left = e.left ? `Zostalo ok. ${fmtDuration(e.etaSec)}${e.measured ? '' : ' (szacunek na start, dokladniej za chwile)'}.` : 'Koncze!'
+  say(`${currentBuild.label}: ${e.done}/${e.total} blokow (${e.pct}%). ${left}`)
+}
+
 // materialy aktualnej budowy - automatyczne sprzatanie ekwipunku (makeRoom) ich nie wyrzuca
 const protectedItems = new Set()
 
@@ -2347,6 +2377,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
     if (dirtId !== undefined) buildMoves.scafoldingBlocks = [dirtId]
     const total = cells.filter(c => c.block !== 'air').length
     let placed = 0
+    currentBuild = { label, total, startedAt: Date.now(), get placed() { return placed } }
     let failed = 0
 
     // 1) teren: od gory wykopujemy to, co przeszkadza (ziemia, trawa, kamien w obrysie)
@@ -2375,7 +2406,8 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
       if (!it && isCreative()) { await creativeRefill(c.block); it = invItemFor(c.block) }
       if (!it && c.alt) { c.block = c.alt; delete c.facing; it = invItemFor(c.block) } // nie mamy schodow - pelny blok
       if (!it) { if (!c.optional) failed++; return 'drop' }
-      setStatus(`buduje ${label}: ${placed}/${total} blokow (${where})`)
+      const eta = buildEta()
+      setStatus(`buduje ${label}: ${placed}/${total} blokow (${where})${eta && eta.measured ? ' - zostalo ok. ' + fmtDuration(eta.etaSec) : ''}`)
       try {
         await goNearCell(c.pos, c.facing && worldDir(front, c.facing))
         await placeBlockAt(it.name, c.pos, c.attach && worldDir(front, c.attach))
@@ -2469,6 +2501,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
   } finally {
     bot.pathfinder.setMovements(normalMoves)
     protectedItems.clear()
+    currentBuild = null
     noDigPositions.clear()
     if (isCreative()) bot.creative.stopFlying()
   }
@@ -4482,6 +4515,7 @@ function handleCommand(user, msg, whisper = false) {
   if (/^(moje|wlasne) komendy$/.test(c)) return macrosCommand()
   if (/^(projekty|moje projekty|moje budowle)$/.test(c)) return designsCommand()
   if (c === 'status') { say(statusText()); return }
+  if (/^(czas|ile jeszcze|ile zostalo|kiedy skonczysz|ile czasu|eta)\??$/.test(c)) return timeCommand()
   if (c === 'co robisz' || c === 'co robisz?') { say(progressText()); return }
   if (c === 'diag') { const r = physicsReport(); console.log('[bot]', r); say(r); return }
   if (c === 'komendy' || c === 'pomoc') { for (const l of HELP) say(l); return }

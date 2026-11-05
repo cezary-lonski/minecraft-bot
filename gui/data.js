@@ -5,6 +5,7 @@ window.COMMANDS = [
   { cat: 'Informacje', cmd: 'jak tam', desc: 'Bieżące zadanie i krok, zdrowie, głód' },
   { cat: 'Informacje', cmd: 'status', desc: 'Zdrowie, głód, pozycja, co trzyma' },
   { cat: 'Informacje', cmd: 'gdzie', desc: 'Współrzędne i wymiar' },
+  { cat: 'Informacje', cmd: 'czas', desc: 'Ile bloków postawił i ile mniej więcej zostało do końca budowy' },
   { cat: 'Informacje', cmd: 'eq', desc: 'Wszystko, co ma w ekwipunku' },
   { cat: 'Informacje', cmd: 'czy masz <co>', desc: 'Np. czy masz diament' },
   { cat: 'Informacje', cmd: 'komendy', desc: 'Ściąga komend na czacie gry' },

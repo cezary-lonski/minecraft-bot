@@ -259,6 +259,7 @@ ustaw `MC_AUTH=microsoft` i `MC_USER=<email konta>` — przy pierwszym starcie b
 | `komendy` (`pomoc`) | ściąga komend na czacie |
 | `jak tam`, `co robisz`, `postęp` | bieżące zadanie i krok, np. „kopię schodami w dół: y=12, cel y=-54" |
 | `status` | zdrowie, głód, pozycja, co trzyma, zadanie |
+| `czas` (`ile jeszcze`, `kiedy skończysz`) | przy budowie: ile bloków już stoi (%) i ile mniej więcej zostało do końca — liczone z tego, jak szybko bot naprawdę buduje |
 | `gdzie` (`pozycja`, `koordy`) | współrzędne i wymiar |
 | `eq` (`ekwipunek`) | wszystko, co ma |
 | `czy masz <co>`, `ile masz <co>` | np. `czy masz diament?` → „Tak: diamond x3" |
