@@ -22,6 +22,8 @@ window.COMMANDS = [
   { cat: 'Zadania', cmd: 'spij', desc: 'Idzie do łóżka i śpi do rana' },
   { cat: 'Zadania', cmd: 'stop', desc: 'Przerywa wszystko' },
   { cat: 'Zadania', cmd: 'kontynuuj', desc: 'Wznawia ostatnie zadanie, np. po „brakuje mi bloków” – najpierw daj mu je' },
+  { cat: 'Zadania', cmd: 'kontynuuj <nazwa>', desc: 'Jedno z 3 ostatnich zadań, np. kontynuuj pałac, kontynuuj 2' },
+  { cat: 'Zadania', cmd: 'kontynuuj lista', desc: 'Pokazuje 3 ostatnie zadania, które można wznowić' },
   // Crafting
   { cat: 'Crafting', cmd: 'scraftuj <co> <ile>', desc: 'Brakujące składniki zdobywa sam' },
   { cat: 'Crafting', cmd: 'scraftuj diamentowy set', desc: 'Cała zbroja + narzędzia (zakłada)' },

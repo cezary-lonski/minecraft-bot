@@ -279,6 +279,7 @@ ustaw `MC_AUTH=microsoft` i `MC_USER=<email konta>` — przy pierwszym starcie b
 | `śpij` | idzie do łóżka (32 bloki) i śpi do rana |
 | `stop` (`zostań`, `czekaj`, `stój`) | przerywa wszystko |
 | `kontynuuj` (`dalej`, `buduj dalej`) | wznawia ostatnie zadanie — np. gdy zabrakło mu bloków: daj mu je i napisz `kontynuuj`. Budowę kończy w tym samym miejscu i zbiera materiał tylko na brakujące bloki |
+| `kontynuuj <nazwa>`, `kontynuuj <numer>`, `kontynuuj lista` | bot pamięta **3 ostatnie** większe zadania (budowy z miejscem i obrotem, burzenie, zdobywanie, craftowanie) — np. `kontynuuj pałac`, `kontynuuj 2`; `kontynuuj lista` pokazuje, co pamięta |
 
 Surowce: drewno, kamień, węgiel, żelazo, złoto, miedź, diament, redstone, lapis, szmaragd, piasek, żwir, ziemia, glina, obsydian,
 zboże, marchew, ziemniaki, buraki, grzyby, trzcina, dynia, melon, kaktus, bambus, wodorosty…

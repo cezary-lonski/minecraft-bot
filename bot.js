@@ -4288,18 +4288,47 @@ function rememberTask(name) {
   if (!lastCommand) return
   lastTask = { cmd: lastCommand, name, at: Date.now() }
   saveJson('last_task.json', lastTask)
+  // dlugie zadania trafiaja tez na liste 3 ostatnich ("kontynuuj <nazwa>")
+  if (/^(zdobadz|zbierz|wykop|przynies|scraftuj|zrob|stworz|poluj|etap|start|przepal|buduj|zburz|usun budowl)/.test(stripPl(lastCommand).toLowerCase())) pushRecent(lastTask)
   lastCommand = null
 }
 function rememberJob(job) {
   if (!lastTask) return
   lastTask.job = job
   if (running) saveJson('last_task.json', lastTask)
+  pushRecent(lastTask) // budowla: z miejscem i obrotem
+}
+
+// 3 ostatnie wieksze zadania (najnowsze pierwsze) - "kontynuuj <nazwa>", "kontynuuj 2", "kontynuuj lista"
+let recentTasks = loadJson('ostatnie_zadania.json', [])
+const recentKey = e => e.job ? `${e.job.kind}:${e.job.type}:${e.job.origin?.x},${e.job.origin?.z}` : designKey(e.cmd)
+function pushRecent(entry) {
+  recentTasks = [entry, ...recentTasks.filter(e => e !== entry && recentKey(e) !== recentKey(entry))].slice(0, 3)
+  saveJson('ostatnie_zadania.json', recentTasks)
+}
+const recentLabel = e => e.job ? `${e.job.kind === 'demolish' ? 'burzenie' : 'budowa'}: ${e.job.label || e.job.type}` : e.cmd
+function agoText(t) {
+  const m = Math.round((Date.now() - (t || 0)) / 60000)
+  return m < 2 ? 'przed chwila' : m < 90 ? `${m} min temu` : m < 60 * 36 ? `${Math.round(m / 60)} h temu` : `${Math.round(m / 1440)} dni temu`
+}
+function recentList() {
+  if (!recentTasks.length) return 'Nie pamietam zadnych zadan do kontynuowania.'
+  return 'Moge kontynuowac: ' + recentTasks.map((e, i) => `${i + 1}) ${recentLabel(e)} (${agoText(e.at)})`).join(', ') + '. Napisz: kontynuuj <nazwa> albo kontynuuj <numer>.'
 }
 function forgetTask() {
   try { fs.unlinkSync(pathLib.join(DATA_DIR, 'last_task.json')) } catch {}
 }
-function continueCommand(user) {
-  const last = lastTask
+function continueCommand(user, arg) {
+  let last = lastTask
+  const a = designKey(arg || '')
+  if (/^(lista|liste|co|wszystko|ostatnie)$/.test(a)) { say(recentList()); return }
+  if (a) {
+    // numer z listy albo nazwa (typ budowli, jej nazwa, komenda)
+    last = /^\d$/.test(a) ? recentTasks[Number(a) - 1]
+      : recentTasks.find(e => [e.job?.type, e.job?.label, e.cmd].some(n => n && designKey(n).includes(a)))
+    if (!last) { say(`Nie pamietam zadania "${arg}". ${recentList()}`); return }
+    lastTask = last
+  }
   if (!last?.cmd) { say('Nie mam czego kontynuowac.'); return }
   if (running) { say(`Jestem zajety (${currentTask}), napisz "stop".`); return }
   const job = last.job
@@ -4434,7 +4463,8 @@ function routeToAi(user, msg, whisper) {
   if (!AI_ON || !aiAllowed(user)) return false
   const t = stripPl(String(msg)).toLowerCase().trim()
   if (/^(stop|zostan|stoj|czekaj)!?$/.test(t)) return false
-  if (/^(czas|ile jeszcze|ile zostalo|kiedy skonczysz|ile czasu|eta|status)??$/.test(t)) return false // szybkie informacje - prosto od bota
+  if (/^(czas|ile jeszcze|ile zostalo|kiedy skonczysz|ile czasu|eta|status)\??$/.test(t)) return false // szybkie informacje - prosto od bota
+  if (/^(kontynuuj|kontynuluj|kontynuj|dalej|wznow|buduj dalej)( |$)/.test(t)) return false // wznawianie zadan - prosto do bota
   if (pendingQuestion && pendingQuestion.options.some(([re]) => re.test(t))) return false
   const nickRe = new RegExp('^@?' + bot.username + '\\b[,:!]?\\s*', 'i')
   const text = String(msg).replace(nickRe, '').replace(/^ai\b[,:]?\s*/i, '').trim()
@@ -4540,7 +4570,8 @@ function handleCommand(user, msg, whisper = false) {
   // te dzialaja zawsze, tez przed wejsciem do swiata
   if (/^(permisja|odbierz|permisje)$/.test(verb)) { permCommand(user, cmd); return }
   if (['stop', 'zostan', 'czekaj', 'stoj'].includes(c)) { stopAll(); return }
-  if (/^(kontynuuj|kontynuluj|kontynuj|kontynułuj|dalej|wznow|rob dalej|buduj dalej)$/.test(c)) return continueCommand(user)
+  const cont = c.match(/^(kontynuuj|kontynuluj|kontynuj|kontynułuj|dalej|wznow|rob dalej|buduj dalej)(?:\s+(.+))?$/)
+  if (cont) return continueCommand(user, cont[2])
   if (/^(naucz si|nowa komenda|stworz komend)/.test(c)) return learnCommand(text)
   if (/^(zapomnij|usun) komend/.test(c)) return forgetMacro(text.replace(/^\S+\s+komend\S*\s*/i, ''))
   if (/^(moje|wlasne) komendy$/.test(c)) return macrosCommand()
