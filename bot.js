@@ -2129,6 +2129,21 @@ const protectedItems = new Set()
 
 // duze budowle (zamczysko, palac) nie mieszcza sie w ekwipunku na raz - materialy zbieramy partiami, warstwa po warstwie
 const BATCH_LIMIT = 600
+// ile blokow budowy zbierac naraz w survivalu (ekwipunek miesci ok. 2300; zostaje miejsce na narzedzia, jedzenie, ziemie)
+const BUILD_CHUNK = 1200
+
+// kreatywny: brakujacy blok z menu; przy pelnym ekwipunku wyrzucamy z niego bloki, ktore nie sa teraz potrzebne
+async function creativeRefill(name) {
+  if (!mcData.itemsByName[name]) return false
+  const free = () => [...Array(36).keys()].map(i => i + 9).some(s => !bot.inventory.slots[s])
+  if (!free()) {
+    const keep = new Set([name, 'dirt'])
+    const slot = [...Array(27).keys()].map(i => i + 9).concat([...Array(9).keys()].map(i => i + 36))
+      .find(s => bot.inventory.slots[s] && !keep.has(bot.inventory.slots[s].name) && bot.heldItem !== bot.inventory.slots[s])
+    if (slot !== undefined) await bot.creative.setInventorySlot(slot, null)
+  }
+  return creativeGive(name, 64)
+}
 
 // rozbieranie bez kopania przez mury: pathfinder nie moze niczego niszczyc ani stawiac nowych slupkow,
 // a kopie tylko sam slupek. Czego nie da sie dosiegnac - zostaje.
@@ -2289,7 +2304,8 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
   try {
     await scaffoldDirt()
     // najpierw to, bez czego sie nie da (sciany, dach, meble); duze budowle - partiami w trakcie
-    if (batched) say(`${label} to ${solidCells.length} blokow - materialy bede zbieral partiami, warstwa po warstwie.`)
+    if (isCreative()) say(`${label}: ${solidCells.length} blokow - biore je z menu na biezaco.`)
+    else if (batched) say(`${label} to ${solidCells.length} blokow - materialy bede zbieral partiami, ile zmiesci sie w ekwipunku.`)
     else if (!await gatherMaterials(solidCells.filter(c => !c.optional && notPlaced(c)), label)) return false
 
     // ozdoby (szyby, pochodnie): pytamy, czy po nie isc
@@ -2298,8 +2314,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
     const lacking = Object.entries(extras).filter(([name, n]) => haveOf(name) < n)
     let wantExtras = false
     if (lacking.length && isCreative()) {
-      wantExtras = true // w kreatywnym ozdoby sa od reki - nie ma o co pytac
-      for (const [name, n] of lacking) await creativeGive(name, n)
+      wantExtras = true // w kreatywnym ozdoby sa od reki (bierzemy je z menu przy stawianiu) - nie ma o co pytac
     } else if (lacking.length) {
       setStatus(`czekam na odpowiedz: zdobyc ozdoby na ${label} czy budowac bez nich`)
       const list = lacking.map(([name, n]) => `${n - haveOf(name)} x ${name}`).join(', ')
@@ -2318,7 +2333,12 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
         }
       }
     }
-    if (!wantExtras) for (const c of cells) if (c.optional && haveOf(c.block) < cells.filter(o => o.block === c.block).length) c.block = 'air'
+    if (!wantExtras) {
+      // ozdoby, ktorych nie mamy w ilosci potrzebnej na cala budowle, pomijamy (licznik raz, a nie dla kazdej komorki - wielkie budowle)
+      const total = {}
+      for (const c of cells) total[c.block] = (total[c.block] || 0) + 1
+      for (const c of cells) if (c.optional && haveOf(c.block) < total[c.block]) c.block = 'air'
+    }
 
     // budujemy bez kopania przez wlasne sciany (kopiemy tylko przy przygotowaniu terenu i zbieraniu)
     const buildMoves = protectBuilds(new Movements(bot))
@@ -2348,10 +2368,11 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
       const cur = bot.blockAt(c.pos)
       if (cur && sameKind(cur.name, c.block)) { placed++; return 'done' }
       if (opts.decor && cur && cur.name !== 'air' && cur.boundingBox !== 'empty') return 'drop' // zajete - zostawiamy
-      if (c.block === 'painting') { if (await hangPainting(c, front)) placed++; return 'drop' }
+      if (c.block === 'painting') { if (isCreative() && !invItemFor('painting')) await creativeRefill('painting'); if (await hangPainting(c, front)) placed++; return 'drop' }
       if (first && !opts.decor) await fillBelow(c.pos)
       if (!hasSupport(c.pos)) return 'retry'
       let it = invItemFor(c.block)
+      if (!it && isCreative()) { await creativeRefill(c.block); it = invItemFor(c.block) }
       if (!it && c.alt) { c.block = c.alt; delete c.facing; it = invItemFor(c.block) } // nie mamy schodow - pelny blok
       if (!it) { if (!c.optional) failed++; return 'drop' }
       setStatus(`buduje ${label}: ${placed}/${total} blokow (${where})`)
@@ -2382,16 +2403,28 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
     }
     for (const y of layers) {
       const pending = cells.filter(c => c.y === y && c.block !== 'air' && !c.late)
-      if (batched && pending.length) {
-        // material na te warstwe (i ewentualnie nastepne, zeby nie chodzic po kazdy blok osobno)
-        const batch = cells.filter(c => c.y >= y && c.y < y + 3 && c.block !== 'air' && (!c.optional || wantExtras))
-        bot.pathfinder.setMovements(normalMoves)
-        if (!await gatherMaterials(batch.filter(c => !c.optional && notPlaced(c)), `${label} (warstwy ${y - layers[0] + 1}-${y - layers[0] + 3})`)) return false
-        if (wantExtras) for (const c of batch.filter(o => o.optional)) if (haveOf(c.block) < 1) { try { await obtain(c.block, 1) } catch {} }
+      const where = `warstwa ${y - layers[0] + 1}/${layers.length}`
+      if (batched && !isCreative() && pending.length) {
+        // duza budowla w survivalu: material na warstwe partiami, ktore mieszcza sie w ekwipunku (stawiamy partie i wracamy po nastepna)
+        const left = pending.filter(c => notPlaced(c))
+        const parts = Math.ceil(left.length / BUILD_CHUNK)
+        for (let i = 0; i < left.length && running; i += BUILD_CHUNK) {
+          const chunk = left.slice(i, i + BUILD_CHUNK)
+          bot.pathfinder.setMovements(normalMoves)
+          const what = parts > 1 ? `${label} (${where}, czesc ${i / BUILD_CHUNK + 1}/${parts})` : `${label} (${where})`
+          if (!await gatherMaterials(chunk.filter(c => !c.optional && notPlaced(c)), what)) return false
+          if (wantExtras) for (const c of chunk.filter(o => o.optional)) if (haveOf(c.block) < 1) { try { await obtain(c.block, 1) } catch {} }
+          await scaffoldDirt()
+          bot.pathfinder.setMovements(buildMoves)
+          await runPasses(chunk, y === layers[0], where)
+        }
+        // to, co w swojej partii nie mialo jeszcze oparcia - ostatnie podejscie dla calej warstwy
+        failed += (await runPasses(left.filter(c => notPlaced(c)), y === layers[0], where)).length
+        continue
       }
       await scaffoldDirt() // ziemia na rusztowania sie konczy - dobieramy
       bot.pathfinder.setMovements(buildMoves)
-      failed += (await runPasses(pending, y === layers[0], `warstwa ${y - layers[0] + 1}/${layers.length}`)).length
+      failed += (await runPasses(pending, y === layers[0], where)).length
     }
 
     // 2b) lampy pod stropem i obrazy - na koniec, kiedy stropy i sciany juz stoja

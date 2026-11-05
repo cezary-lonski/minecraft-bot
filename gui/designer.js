@@ -912,7 +912,7 @@
   }
 
   // ---------- generowanie ----------
-  const LIMIT = 60000
+  const LIMIT = 400000 // komorki planu (razem z pustym wnetrzem)
   function generate(spec) {
     const g = new Grid()
     const warnings = []

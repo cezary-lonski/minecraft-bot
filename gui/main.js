@@ -358,7 +358,7 @@ function saveDesign(spec) {
   const r = Designer.generate(spec)
   const blocks = r.cells.filter(c => c.block !== 'air').length
   if (!blocks) return { ok: false, error: 'Budowla nie ma żadnych bloków.' }
-  if (blocks > 40000) return { ok: false, error: `Za duża budowla (${blocks} bloków, max 40000).` }
+  if (blocks > 150000) return { ok: false, error: `Za duża budowla (${blocks} bloków, max 150 000).` }
   const rec = { key, name, description: spec.description || '', spec: { ...spec, name }, plan: r.cells, rooms: r.rooms, ahead: r.ahead, size: r.size, blocks, created: Date.now() }
   writeJson(fileOf(DESIGNS_DIR, key), rec)
   send('designs-changed', {})
