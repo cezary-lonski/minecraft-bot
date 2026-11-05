@@ -57,18 +57,20 @@ window.COMMANDS = [
   // Budowanie
   { cat: 'Budowanie', cmd: 'buduj <budowla>', desc: 'dom, zamek, zamczysko, pałac, pałac endu…' },
   { cat: 'Budowanie', cmd: 'buduj napis: <tekst>', desc: 'Napis z bloków' },
-  { cat: 'Budowanie', cmd: 'wystroj <budowla>', desc: 'Meble, latarnie, drabiny, dywany, obrazy' },
   { cat: 'Budowanie', cmd: 'zburz <budowla>', desc: 'Rozbiera budowlę (pyta o potwierdzenie)' },
-  { cat: 'Budowanie', cmd: 'rozbierz rusztowania', desc: 'Usuwa słupki rusztowań' },
+  { cat: 'Budowanie', cmd: 'rozbierz rusztowania', desc: 'Usuwa lewitującą ziemię z rusztowań' },
   { cat: 'Budowanie', cmd: 'projekty', desc: 'Lista budowli z Kreatora (buduj <nazwa>)' },
   // Wlasne komendy
   { cat: 'Własne komendy', cmd: 'moje komendy', desc: 'Lista komend, których nauczyłeś bota' },
   { cat: 'Własne komendy', cmd: 'naucz sie <nazwa>: <krok>; <krok>', desc: 'Nowa komenda z kroków, np. naucz się drewno: zdobadz drewno 16; idz do bazy; schowaj' },
   { cat: 'Własne komendy', cmd: 'zapomnij komende <nazwa>', desc: 'Usuwa własną komendę' },
   // Zespol
-  { cat: 'Zespół', cmd: 'pomoz', desc: 'Dołącza do pracy innego bota (budowa, wystrój, burzenie, walka)' },
+  { cat: 'Zespół', cmd: 'pomoz', desc: 'Dołącza do pracy innego bota (budowa, burzenie, walka)' },
   { cat: 'Zespół', cmd: 'pomoz <bot>', desc: 'Pomaga konkretnemu botowi' },
   { cat: 'Zespół', cmd: 'popros <bot> o <co> <ile>', desc: 'Prosi innego bota o przedmioty – przyniesie je' },
+  // AI w grze (wlaczane w ustawieniach bota)
+  { cat: 'AI w grze', cmd: 'ai <pytanie>', desc: 'Pytanie do AI na czacie gry, np. ai jak pokonać smoka?' },
+  { cat: 'AI w grze', cmd: 'Claude, <prośba>', desc: 'Prośba do bota po nicku – komenda albo zadanie dla AI, np. Claude, zbuduj coś fajnego' },
   // Inne
   { cat: 'Inne', cmd: 'chat <tekst>', desc: 'Pisze na czacie gry' },
   { cat: 'Inne', cmd: 'skrzynie wl', desc: 'Zaglądanie do skrzyń w trakcie zadań' },

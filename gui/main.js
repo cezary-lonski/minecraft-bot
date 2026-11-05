@@ -17,7 +17,7 @@ const PROFILES_FILE = path.join(DATA, 'bots.json')
 const APP_SETTINGS_FILE = path.join(DATA, 'app-settings.json')
 const BOT_DEFAULTS = {
   name: 'Claude', mode: 'lan', port: '', host: '', player: '', owner: '', password: '', version: '',
-  loot: 'auto', rtp: true, chatDelay: '', eatBelow: 8, autoHelp: true
+  loot: 'auto', rtp: true, chatDelay: '', eatBelow: 8, autoHelp: true, aiChat: false
 }
 const APP_DEFAULTS = { autoUpdate: true }
 
@@ -83,6 +83,7 @@ function botEnv(p) {
   }
   env.MC_PLAYER = p.player || p.owner || '' // do kogo odnosza sie "tu", "daj", "chodz za mna" z okna programu
   env.MC_AUTO_HELP = p.autoHelp === false ? '0' : '1'
+  env.MC_AI = p.aiChat ? '1' : '0' // AI w grze (pytania ida przez program, klucz zostaje w programie)
   if (p.version) env.MC_VERSION = p.version
   if (p.loot === 'on') env.MC_LOOT = '1'
   if (p.loot === 'off') env.MC_LOOT = '0'
@@ -128,6 +129,10 @@ function handleBotLine(id, line) {
       lastStatus.set(id, { connected: st.connected, health: st.health, food: st.food, pos: st.pos, task: st.task, gameMode: st.gameMode })
       send('status', { id, ...st })
     } catch {}
+    return
+  }
+  if (line.startsWith('@@AI ')) {
+    try { handleAiRequest(id, JSON.parse(line.slice(5))) } catch {}
     return
   }
   if (line.startsWith('@@TEAM ')) {
@@ -249,13 +254,16 @@ ipcMain.handle('commands:save', (e, c) => saveCommand(c))
 ipcMain.handle('commands:delete', (e, key) => { try { fs.unlinkSync(fileOf(COMMANDS_DIR, key)) } catch {} send('commands-changed', {}); return { ok: true } })
 
 // ---------- asystent AI ----------
-// klucz API szyfrowany przez system (safeStorage), zapisany w ustawieniach programu
-function getKey() {
-  const s = appSettings()
-  if (!s.apiKeyEnc) return null
-  try { return safeStorage.decryptString(Buffer.from(s.apiKeyEnc, 'base64')) } catch { return null }
+// klucze API szyfrowane przez system (safeStorage), zapisane w ustawieniach programu; Gemini albo Claude
+const KEY_FIELD = { claude: 'apiKeyEnc', gemini: 'geminiKeyEnc' }
+const getProvider = () => (appSettings().aiProvider === 'claude' ? 'claude' : 'gemini')
+function getKey(provider = getProvider()) {
+  const enc = appSettings()[KEY_FIELD[provider]]
+  if (!enc) return null
+  try { return safeStorage.decryptString(Buffer.from(enc, 'base64')) } catch { return null }
 }
 const assistant = createAssistant({
+  getProvider,
   getKey,
   saveDesign,
   saveCommand,
@@ -273,16 +281,36 @@ const assistant = createAssistant({
   emit: ev => send('ai-event', ev)
 })
 const lastStatus = new Map() // ostatni stan kazdego bota (dla asystenta)
+// rodzaj klucza po poczatku: Claude "sk-ant-...", Google "AIza..." albo "AQ...."
+const providerOfKey = k => /^sk-ant-/.test(k) ? 'claude' : /^(AIza|AQ\.)/.test(k) ? 'gemini' : null
 ipcMain.handle('ai:hasKey', () => !!getKey())
-ipcMain.handle('ai:setKey', (e, key) => {
+ipcMain.handle('ai:keys', () => ({ provider: getProvider(), gemini: !!getKey('gemini'), claude: !!getKey('claude') }))
+ipcMain.handle('ai:setProvider', (e, p) => { writeJson(APP_SETTINGS_FILE, { ...appSettings(), aiProvider: p === 'claude' ? 'claude' : 'gemini' }); return { ok: true } })
+// zapis klucza: provider podany albo rozpoznany po kluczu; zapisany klucz od razu staje sie aktywnym silnikiem
+ipcMain.handle('ai:setKey', (e, key, provider) => {
   const k = String(key || '').trim()
-  if (!k) { writeJson(APP_SETTINGS_FILE, { ...appSettings(), apiKeyEnc: null }); return { ok: true } }
+  const p = provider || providerOfKey(k) || getProvider()
+  if (!k) { writeJson(APP_SETTINGS_FILE, { ...appSettings(), [KEY_FIELD[p]]: null }); return { ok: true, provider: p } }
+  if (!providerOfKey(k)) return { ok: false, error: 'To nie wygląda na klucz Gemini (AIza… / AQ.…) ani Claude (sk-ant-…).' }
   if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'System nie pozwala bezpiecznie zapisać klucza.' }
-  writeJson(APP_SETTINGS_FILE, { ...appSettings(), apiKeyEnc: safeStorage.encryptString(k).toString('base64') })
-  return { ok: true }
+  const real = providerOfKey(k)
+  writeJson(APP_SETTINGS_FILE, { ...appSettings(), [KEY_FIELD[real]]: safeStorage.encryptString(k).toString('base64'), aiProvider: real })
+  return { ok: true, provider: real }
 })
-ipcMain.handle('ai:chat', (e, text, botId) => assistant.chat(text, { botId }))
-ipcMain.handle('ai:reset', () => { assistant.reset(); return { ok: true } })
+ipcMain.handle('ai:chat', (e, text, botId) => assistant.chat(text, { conv: 'app', botId }))
+ipcMain.handle('ai:reset', () => { assistant.reset('app'); return { ok: true } })
+
+// AI w grze: bot przysyla pytanie gracza (@@AI), odpowiedz wraca na jego wejscie (@@AIREPLY) i bot pisze ja na czacie
+async function handleAiRequest(id, req) {
+  const p = loadProfiles().find(x => x.id === id)
+  const entry = procs.get(id)
+  if (!p || !entry) return
+  send('log', { id, kind: 'gui', text: `🤖 AI: ${req.from}: ${req.text}` })
+  const res = await assistant.chat(req.text, { conv: 'bot:' + id, botId: id, inGame: true, botName: p.name, player: req.from })
+  const text = res.ok ? res.text : 'AI: ' + res.error
+  send('log', { id, kind: 'gui', text: `🤖 AI → ${text}` })
+  if (procs.get(id) === entry) entry.proc.stdin.write('@@AIREPLY ' + JSON.stringify({ id: req.id, text }) + '\n')
+}
 
 // ---------- aktualizacje (GitHub Releases) ----------
 function setupUpdates() {

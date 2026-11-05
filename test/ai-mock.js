@@ -45,6 +45,7 @@ const { createAssistant } = require(path.join('..', 'gui', 'ai'))
 const saved = []
 const events = []
 const a = createAssistant({
+  getProvider: () => 'claude',
   getKey: () => 'sk-test',
   saveDesign: spec => { const r = Designer.generate(spec); saved.push({ spec, r }); return { ok: true, key: 'kurczak', name: spec.name, size: r.size, blocks: r.cells.filter(c => c.block !== 'air').length, materials: r.materials, warnings: r.warnings } },
   saveCommand: () => ({ ok: true }),

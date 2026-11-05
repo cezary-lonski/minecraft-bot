@@ -129,7 +129,8 @@ const CHAT_DELAY = parseInt(process.env.MC_CHAT_DELAY || '3200')
 const chatQueue = []
 let lastChat = 0
 setInterval(() => {
-  if (!chatQueue.length || Date.now() - lastChat < CHAT_DELAY) return
+  // przed wejsciem do swiata czat nie dziala - wiadomosci czekaja w kolejce
+  if (!chatQueue.length || Date.now() - lastChat < CHAT_DELAY || typeof bot.chat !== 'function') return
   const text = chatQueue.shift()
   lastChat = Date.now()
   try { bot.chat(text) } catch (e) { console.log('[bot] Nie wyslano:', e.message) }
@@ -887,9 +888,18 @@ async function unstickTick() {
     const canBreak = b => b && b.boundingBox === 'block' && bot.canDigBlock(b) && !isBuilt(b.position) && !CLIMBABLE.includes(b.name) &&
       !/_door$|_fence_gate$|chest|furnace|crafting_table|bed$/.test(b.name)
     if (inside) {
-      console.log(`[bot] jestem wbity w ${inside.name} - wykopuje sie`)
+      if (Date.now() - (unstickTick.lastLog || 0) > 10000) { unstickTick.lastLog = Date.now(); console.log(`[bot] jestem wbity w ${inside.name} - wykopuje sie`) }
       if (/_door$|_fence_gate$/.test(inside.name)) { await bot.activateBlock(inside) } // drzwi/furtke otwieramy
       else if (canBreak(inside)) { try { await bot.tool.equipForBlock(inside, {}) } catch {} await bot.dig(inside, true) }
+      else if (isBuilt(inside.position) && isCreative() && bot.canDigBlock(inside)) {
+        // wbity we wlasna budowle: w kreatywnym wyjmujemy blok, wychodzimy i zaraz odstawiamy go na miejsce
+        const p = inside.position.clone()
+        const name = inside.name
+        await bot.dig(inside, true)
+        setTimeout(async () => {
+          try { if (bot.blockAt(p)?.name === 'air') { await creativeGive(name, 1); await placeBlockAt(name, p) } } catch (e) { console.log('[bot] nie odstawilem bloku:', e.message) }
+        }, 2500)
+      }
       else {
         // nie da sie wykopac (np. czesc budowli): wyskakujemy w gore/bok
         bot.setControlState('jump', true)
@@ -1248,7 +1258,7 @@ function run() {
 const HELP = [
   'Zadania: start, etap <drewno|kamien|jedzenie|zelazo|diamenty>, zdobadz <surowiec|przedmiot|jedzenie> [ile], poluj [zwierze] [ile], przepal, scraftuj <co>, stop',
   'Ruch: tu, idz <ile> <przod|tyl|lewo|prawo>, idz do <x z | punkt | gracz>, chodz za mna, ochraniaj [gracz], zabij <gracz>, spij',
-  'Budowa: wystroj <budowla>, zburz <budowla>, rozbierz rusztowania, buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
+  'Budowa (z wystrojem): zburz <budowla>, rozbierz rusztowania, buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
   'Zespol: pomoz [bot], popros <bot> o <co> [ile], zabij <gracz|mob|imie>',
@@ -1652,12 +1662,29 @@ async function creativeGive(name, amount) {
 
 // lot w kreatywnym: w gore, poziomo i w dol. flyTo leci prosto (przez bloki), wiec lecimy na wysokosci,
 // ktora przy budowie od dolu jest jeszcze pusta (nad biezaca warstwa)
+// Lot w kreatywnym idzie po prostej i nie omija blokow - przez sciane czy dach bot by sie w nie wbil.
+// Dlatego lecimy tylko, gdy cala trasa (nogi i glowa, z zapasem na szerokosc ciala) jest wolna; inaczej false.
+function segmentClear(a, b) {
+  const steps = Math.max(1, Math.ceil(a.distanceTo(b) / 0.3))
+  for (let i = 0; i <= steps; i++) {
+    const p = a.plus(b.minus(a).scaled(i / steps))
+    for (const dy of [0.1, 1.1, 1.7]) {
+      for (const [dx, dz] of [[0, 0], [0.3, 0.3], [-0.3, 0.3], [0.3, -0.3], [-0.3, -0.3]]) {
+        if (bot.blockAt(p.offset(dx, dy, dz))?.boundingBox === 'block') return false
+      }
+    }
+  }
+  return true
+}
 async function creativeFlyTo(target) {
   const dest = new Vec3(target.x + 0.5, target.y, target.z + 0.5)
   const top = Math.max(bot.entity.position.y, dest.y) + 1
-  await bot.creative.flyTo(new Vec3(bot.entity.position.x, top, bot.entity.position.z))
-  await bot.creative.flyTo(new Vec3(dest.x, top, dest.z))
+  const route = [bot.entity.position.clone(), new Vec3(bot.entity.position.x, top, bot.entity.position.z), new Vec3(dest.x, top, dest.z), dest]
+  for (let i = 0; i < route.length - 1; i++) if (!segmentClear(route[i], route[i + 1])) return false
+  await bot.creative.flyTo(route[1])
+  await bot.creative.flyTo(route[2])
   await bot.creative.flyTo(dest)
+  return true
 }
 
 // nazwa przedmiotu pasujacego do wzorca (np. /_(log|stem)$/ -> oak_log)
@@ -2027,9 +2054,19 @@ async function goNearCell(pos, facing) {
     const here = bot.entity.position
     const inBody = here.floored().equals(pos) || here.floored().offset(0, 1, 0).equals(pos)
     if (!facing && !inBody && here.distanceTo(pos.offset(0.5, 0.5, 0.5)) <= 4.2) return
-    const stand = facing ? pos.offset(-facing.x, 0, -facing.z) : pos.offset(0, 2, 0)
-    if (here.distanceTo(stand.offset(0.5, 0, 0.5)) > 1) await creativeFlyTo(stand)
-    return
+    const free = p => bot.blockAt(p)?.boundingBox !== 'block'
+    const freeStand = p => free(p) && free(p.offset(0, 1, 0)) && !p.equals(pos) && !p.offset(0, 1, 0).equals(pos)
+    // gdzie stanac: nad blokiem, a jak tam zajete (strop, dach) - obok albo po skosie, ale w zasiegu reki
+    const spots = facing
+      ? [pos.offset(-facing.x, 0, -facing.z)]
+      : [pos.offset(0, 2, 0), ...[[1, 0], [-1, 0], [0, 1], [0, -1], [2, 0], [-2, 0], [0, 2], [0, -2], [1, 1], [-1, 1], [1, -1], [-1, -1]]
+          .flatMap(([dx, dz]) => [pos.offset(dx, 0, dz), pos.offset(dx, 1, dz), pos.offset(dx, -1, dz)])]
+    for (const stand of spots.filter(freeStand)) {
+      if (here.distanceTo(stand.offset(0.5, 0, 0.5)) <= 1) return
+      if (await creativeFlyTo(stand)) return
+    }
+    // zadne miejsce nie jest osiagalne lotem po prostej (np. zamkniety pokoj): ladujemy i idziemy jak w survivalu
+    bot.creative.stopFlying()
   }
   if (facing) {
     // stoimy na poprzednim stopniu (albo na ziemi przed pierwszym) - tak schody obracaja sie w strone marszu
@@ -2088,35 +2125,6 @@ const protectedItems = new Set()
 // duze budowle (zamczysko, palac) nie mieszcza sie w ekwipunku na raz - materialy zbieramy partiami, warstwa po warstwie
 const BATCH_LIMIT = 600
 
-// Slupki rusztowan (pathfinder stawia je, zeby siegnac wysoko): pionowo co najmniej 2 bloki ziemi/bruku, kazdy
-// z co najwyzej jednym sasiadem po bokach (slupek czesto przylega do muru), nad szczytem pusto, pod spodem cos stoi.
-// Mury i wieze maja po 2+ sasiadow, blanki sa pojedyncze, a krawedz bramy ma mur nad soba - te zostaja.
-function looseColumns(x1, x2, z1, z2, y1, y2) {
-  const pillarLike = p => {
-    const b = bot.blockAt(p)
-    if (!b || !SCAFFOLD.includes(b.name)) return false
-    const sides = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dz]) => isSolid(p.offset(dx, 0, dz)))
-    if (sides.length === 0) return true
-    if (sides.length > 1) return false
-    // jeden sasiad: slupek przy murze (za murem pusto) - tak; koniec muru (mur ciagnie sie dalej w te strone) - nie
-    const [dx, dz] = sides[0]
-    return !isSolid(p.offset(2 * dx, 0, 2 * dz))
-  }
-  const blocks = []
-  for (let x = x1; x <= x2; x++) {
-    for (let z = z1; z <= z2; z++) {
-      let run = []
-      for (let y = y2; y >= y1; y--) {
-        const p = new Vec3(x, y, z)
-        if (pillarLike(p)) { run.push(p); continue }
-        if (run.length >= 2 && isSolid(p) && !isSolid(run[0].offset(0, 1, 0))) blocks.push(...run)
-        run = []
-      }
-    }
-  }
-  return blocks
-}
-
 // rozbieranie bez kopania przez mury: pathfinder nie moze niczego niszczyc ani stawiac nowych slupkow,
 // a kopie tylko sam slupek. Czego nie da sie dosiegnac - zostaje.
 async function removeBlocksCarefully(positions) {
@@ -2141,35 +2149,51 @@ async function removeBlocksCarefully(positions) {
 function cleanupCommand() {
   return task('rozbieranie rusztowan', async () => {
     const c = bot.entity.position.floored()
-    const blocks = looseColumns(c.x - 20, c.x + 20, c.z - 20, c.z + 20, c.y - 12, c.y + 40)
-    if (!blocks.length) { say('Nie widze rusztowan w promieniu 20 blokow.'); return }
+    // najblizsza zapamietana budowla: znamy jej obrys i poziom gruntu; bez niej - 20 blokow wokol bota, grunt pod jego stopami
+    const near = builds.filter(r => (!r.dim || r.dim === bot.game?.dimension) && Math.hypot(r.origin.x - c.x, r.origin.z - c.z) < 48)
+      .sort((a, b) => Math.hypot(a.origin.x - c.x, a.origin.z - c.z) - Math.hypot(b.origin.x - c.x, b.origin.z - c.z))[0]
+    let blocks
+    if (near && planOf(near.type)) {
+      const o = new Vec3(near.origin.x, near.origin.y, near.origin.z)
+      const cells = planWithDecor(near.type, planOf(near.type)).map(x => ({ ...x, pos: toWorld(o, near.front, x.x, x.y, x.z) }))
+      blocks = findScaffolding(cells, near.origin.y)
+      say(`Sprzatam ziemie z rusztowan przy: ${near.type}.`)
+    } else {
+      blocks = floatingDirt(c.x - 20, c.x + 20, c.z - 20, c.z + 20, c.y, c.y + 40)
+    }
+    if (!blocks.length) { say('Nie widze lewitujacej ziemi (rusztowan) w okolicy.'); return }
     say(`Rozbieram rusztowania: ${blocks.length} blokow.`)
     const removed = await removeBlocksCarefully(blocks)
     if (running) say(removed < blocks.length ? `Rozebralem ${removed} z ${blocks.length} (reszty nie dosiegne).` : `Rozebralem ${removed} blokow rusztowania.`)
   })
 }
 
-// po budowie (znamy plan): w obrysie wszystko z ziemi/bruku, co nie nalezy do planu; do 4 blokow dookola - slupki
+// Rusztowania sa z ziemi, wiec po budowie usuwamy cala ziemie od pierwszego poziomu nad gruntem w gore (yGround to poziom,
+// na ktorym stoi bot - grunt jest pod nim). Zostaje ziemia z planu budowli i naturalne pagorki (na szczycie kolumny jest trawa).
+function floatingDirt(x1, x2, z1, z2, yGround, y2, keep = new Set()) {
+  const found = []
+  for (let x = x1; x <= x2; x++) {
+    for (let z = z1; z <= z2; z++) {
+      for (let y = yGround; y <= y2; y++) {
+        const p = new Vec3(x, y, z)
+        if (bot.blockAt(p)?.name !== 'dirt' || keep.has(posKey(p))) continue
+        let t = y + 1
+        while (bot.blockAt(new Vec3(x, t, z))?.name === 'dirt') t++
+        if (/^(grass_block|podzol|mycelium|moss_block|rooted_dirt)$/.test(bot.blockAt(new Vec3(x, t, z))?.name || '')) continue
+        found.push(p)
+      }
+    }
+  }
+  return found
+}
+
+// po budowie (znamy plan): lewitujaca ziemia w obrysie budowli i do 4 blokow dookola
 function findScaffolding(cells, groundY) {
   const planKeys = new Set(cells.filter(c => c.block !== 'air' && !c.temp).map(c => posKey(c.pos)))
   const xs = cells.map(c => c.pos.x)
   const zs = cells.map(c => c.pos.z)
-  const [minX, maxX, minZ, maxZ] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)]
   const maxY = Math.max(...cells.map(c => c.pos.y)) + 2
-  const found = new Map()
-  for (let x = minX; x <= maxX; x++) {
-    for (let z = minZ; z <= maxZ; z++) {
-      for (let y = groundY; y <= maxY; y++) {
-        const p = new Vec3(x, y, z)
-        const b = bot.blockAt(p)
-        if (b && SCAFFOLD.includes(b.name) && !planKeys.has(posKey(p))) found.set(posKey(p), p)
-      }
-    }
-  }
-  for (const p of looseColumns(minX - 4, maxX + 4, minZ - 4, maxZ + 4, groundY - 1, maxY)) {
-    if (!planKeys.has(posKey(p))) found.set(posKey(p), p)
-  }
-  return [...found.values()]
+  return floatingDirt(Math.min(...xs) - 4, Math.max(...xs) + 4, Math.min(...zs) - 4, Math.max(...zs) + 4, groundY, maxY, planKeys)
 }
 
 async function hangPainting(c, front) {
@@ -2196,7 +2220,7 @@ async function removeScaffolding(found) {
   return await removeBlocksCarefully(found)
 }
 
-// czerwony blok w podlozu tam, gdzie bot stal, zaczynajac budowe - zeby bylo wiadomo, gdzie stanac przy "wystroj" i "zburz"
+// czerwony blok w podlozu tam, gdzie bot stal, zaczynajac budowe - zeby bylo wiadomo, gdzie stanac przy "zburz"
 const MARKERS = ['red_concrete', 'red_wool', 'red_terracotta', 'redstone_block', 'red_concrete_powder', 'red_glazed_terracotta']
 async function placeStartMarker(feet) {
   const spot = feet.offset(0, -1, 0)
@@ -2213,7 +2237,7 @@ async function placeStartMarker(feet) {
     await goNearCell(spot)
     await clearBlock(spot)
     await placeBlockAt(it.name, spot)
-    say(`Postawilem czerwony znacznik startu (${spot.x} ${spot.y} ${spot.z}) - stan na nim przy "wystroj" albo "zburz".`)
+    say(`Postawilem czerwony znacznik startu (${spot.x} ${spot.y} ${spot.z}) - stan na nim przy "zburz".`)
   } catch (e) { console.log('[bot] znacznik:', e.message) }
 }
 
@@ -2242,8 +2266,23 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
     for (const c of planOf(opts.type) || []) if (c.block !== 'air') noDigPositions.add(posKey(toWorld(origin, front, c.x, c.y, c.z)))
   }
   const normalMoves = bot.pathfinder.movements
-  if (isCreative()) await creativeGive('dirt', 64) // rusztowanie dla pathfindera
+  // rusztowania sa zawsze z ziemi: pathfinder przy budowie stawia slupki tylko z niej (po budowie cala znika)
+  const dirtId = mcData.itemsByName.dirt?.id
+  const terrainMoves = protectBuilds(new Movements(bot))
+  terrainMoves.canDig = true
+  terrainMoves.allow1by1towers = true
+  if (dirtId !== undefined) terrainMoves.scafoldingBlocks = [dirtId]
+  protectedItems.add('dirt')
+  const scaffoldDirt = async () => {
+    if (isCreative()) { if (count('dirt') < 32) await creativeGive('dirt', 64); return }
+    if (count('dirt') >= 16 || opts.decor) return
+    bot.pathfinder.setMovements(normalMoves)
+    setStatus(`zbieram ziemie na rusztowania (${label})`)
+    say('Zbieram ziemie na rusztowania.')
+    try { await obtain('dirt', 64) } catch (e) { console.log('[bot] ziemia na rusztowania:', e.message) }
+  }
   try {
+    await scaffoldDirt()
     // najpierw to, bez czego sie nie da (sciany, dach, meble); duze budowle - partiami w trakcie
     if (batched) say(`${label} to ${solidCells.length} blokow - materialy bede zbieral partiami, warstwa po warstwie.`)
     else if (!await gatherMaterials(solidCells.filter(c => !c.optional && notPlaced(c)), label)) return false
@@ -2280,12 +2319,14 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
     const buildMoves = protectBuilds(new Movements(bot))
     buildMoves.canDig = false
     buildMoves.allow1by1towers = true
+    if (dirtId !== undefined) buildMoves.scafoldingBlocks = [dirtId]
     const total = cells.filter(c => c.block !== 'air').length
     let placed = 0
     let failed = 0
 
     // 1) teren: od gory wykopujemy to, co przeszkadza (ziemia, trawa, kamien w obrysie)
     say(`Buduje ${label} (${total} blokow). Najpierw przygotowuje teren.`)
+    bot.pathfinder.setMovements(terrainMoves)
     for (const c of [...cells].sort((a, b) => b.y - a.y)) {
       if (!running) return false
       const b = bot.blockAt(c.pos)
@@ -2297,8 +2338,45 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
 
     // 2) stawianie warstwami od dolu; w warstwie kilka przejsc - blok musi miec sie o co oprzec
     const layers = [...new Set(cells.map(c => c.y))].sort((a, b) => a - b)
+    // jeden blok: 'done' (stoi), 'retry' (sprobowac w nastepnym przejsciu), 'drop' (pominac)
+    const placeOne = async (c, first, where) => {
+      const cur = bot.blockAt(c.pos)
+      if (cur && sameKind(cur.name, c.block)) { placed++; return 'done' }
+      if (opts.decor && cur && cur.name !== 'air' && cur.boundingBox !== 'empty') return 'drop' // zajete - zostawiamy
+      if (c.block === 'painting') { if (await hangPainting(c, front)) placed++; return 'drop' }
+      if (first && !opts.decor) await fillBelow(c.pos)
+      if (!hasSupport(c.pos)) return 'retry'
+      let it = invItemFor(c.block)
+      if (!it && c.alt) { c.block = c.alt; delete c.facing; it = invItemFor(c.block) } // nie mamy schodow - pelny blok
+      if (!it) { if (!c.optional) failed++; return 'drop' }
+      setStatus(`buduje ${label}: ${placed}/${total} blokow (${where})`)
+      try {
+        await goNearCell(c.pos, c.facing && worldDir(front, c.facing))
+        await placeBlockAt(it.name, c.pos, c.attach && worldDir(front, c.attach))
+        placed++
+        if (CONTAINERS.includes(c.block)) { ownChests.add(posKey(c.pos)); saveJson('chests.json', [...ownChests]) }
+        return 'done'
+      } catch (e) {
+        console.log(`[bot] nie postawilem ${c.block}: ${e.message}`)
+        return 'retry'
+      }
+    }
+    // kilka przejsc; schody (dach), ktore nie wyszly z dwoch podejsc - zwykly blok, zeby nie zostala dziura
+    const runPasses = async (pending, first, where) => {
+      for (let pass = 0; pass < (opts.passes || 4) && pending.length && running; pass++) {
+        const next = []
+        for (const c of pending) {
+          if (!running) break
+          if ((await placeOne(c, first, where)) !== 'retry') continue
+          if (c.alt && c.facing && pass >= 1) { c.block = c.alt; delete c.facing }
+          next.push(c)
+        }
+        pending = next
+      }
+      return pending
+    }
     for (const y of layers) {
-      let pending = cells.filter(c => c.y === y && c.block !== 'air')
+      const pending = cells.filter(c => c.y === y && c.block !== 'air' && !c.late)
       if (batched && pending.length) {
         // material na te warstwe (i ewentualnie nastepne, zeby nie chodzic po kazdy blok osobno)
         const batch = cells.filter(c => c.y >= y && c.y < y + 3 && c.block !== 'air' && (!c.optional || wantExtras))
@@ -2306,36 +2384,16 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
         if (!await gatherMaterials(batch.filter(c => !c.optional && notPlaced(c)), `${label} (warstwy ${y - layers[0] + 1}-${y - layers[0] + 3})`)) return false
         if (wantExtras) for (const c of batch.filter(o => o.optional)) if (haveOf(c.block) < 1) { try { await obtain(c.block, 1) } catch {} }
       }
+      await scaffoldDirt() // ziemia na rusztowania sie konczy - dobieramy
       bot.pathfinder.setMovements(buildMoves)
-      for (let pass = 0; pass < (opts.passes || 4) && pending.length && running; pass++) {
-        const next = []
-        for (const c of pending) {
-          if (!running) break
-          const cur = bot.blockAt(c.pos)
-          if (cur && sameKind(cur.name, c.block)) { placed++; continue }
-          if (opts.decor && cur && cur.name !== 'air' && cur.boundingBox !== 'empty') continue // zajete - zostawiamy
-          if (c.block === 'painting') { if (await hangPainting(c, front)) placed++; continue }
-          if (y === layers[0] && !opts.decor) await fillBelow(c.pos)
-          if (!hasSupport(c.pos)) { next.push(c); continue }
-          let it = invItemFor(c.block)
-          if (!it && c.alt) { c.block = c.alt; delete c.facing; it = invItemFor(c.block) } // nie mamy schodow - pelny blok
-          if (!it) { if (!c.optional) failed++; continue }
-          setStatus(`buduje ${label}: ${placed}/${total} blokow (warstwa ${y - layers[0] + 1}/${layers.length})`)
-          try {
-            await goNearCell(c.pos, c.facing && worldDir(front, c.facing))
-            await placeBlockAt(it.name, c.pos, c.attach && worldDir(front, c.attach))
-            placed++
-            if (CONTAINERS.includes(c.block)) { ownChests.add(posKey(c.pos)); saveJson('chests.json', [...ownChests]) }
-          } catch (e) {
-            console.log(`[bot] nie postawilem ${c.block}: ${e.message}`)
-            // schody (dach) nie wyszly z dwoch podejsc - stawiamy zwykly blok, zeby w dachu nie zostala dziura
-            if (c.alt && c.facing && pass >= 1) { c.block = c.alt; delete c.facing }
-            next.push(c)
-          }
-        }
-        pending = next
-      }
-      failed += pending.length
+      failed += (await runPasses(pending, y === layers[0], `warstwa ${y - layers[0] + 1}/${layers.length}`)).length
+    }
+
+    // 2b) lampy pod stropem i obrazy - na koniec, kiedy stropy i sciany juz stoja
+    const late = cells.filter(c => c.late && c.block !== 'air')
+    if (late.length && running) {
+      bot.pathfinder.setMovements(buildMoves)
+      failed += (await runPasses(late, false, 'lampy i obrazy')).length
     }
 
     // 3) rusztowania: pathfinder, zeby siegnac wysoko, stawia slupki z ziemi/bruku i ich nie rozbiera.
@@ -2956,18 +3014,13 @@ function locateBuild(type) {
   return best
 }
 
-// drabiny (i otwory na nie) z wystroju danej budowli - dokladane od razu do planu budowy
-function ladderCells(type) {
-  const d = decorPlan(type)
-  if (!d) return []
-  const ladders = d.filter(c => c.block === 'ladder')
-  // otwory: komorki "air" z wystroju (dziury w dachu nad drabinami, drzwi do wiez)
-  return [...d.filter(c => c.block === 'air'), ...ladders]
-}
-
-// plan budowy razem z drabinami (palac endu ma je juz w planie)
-function planWithLadders(type, plan) {
-  return type === 'palac endu' || !PLAN_FOR_TYPE[type] ? plan : replaceInterior([...plan, ...ladderCells(type)])
+// plan budowy razem z wystrojem: bot urzadza wnetrze od razu przy budowie (meble, oswietlenie, drabiny, dywany, obrazy).
+// Meble sa ozdobami (bot pyta, czy po nie isc); lampy wiszace pod stropem i obrazy stawia na koniec, gdy stoja juz stropy i sciany.
+function planWithDecor(type, plan) {
+  const decor = (decorPlan(type) || []).map(c => c.block === 'air' || c.block === 'ladder'
+    ? c
+    : { ...c, optional: true, late: (c.attach && c.attach.y > 0) || c.block === 'painting' || undefined })
+  return replaceInterior([...plan, ...decor])
 }
 
 // gdzie stoi budowla: z pamieci (builds.json), a gdy jej nie ma albo "tutaj" - rozpoznana z miejsca, w ktorym stoi bot
@@ -3037,20 +3090,6 @@ function demolishCommand(text) {
       forgetBuiltCache()
     }
   })
-}
-
-// "wystroj <budowla> [tutaj]"
-function decorCommand(text) {
-  const t = stripPl(text).trim()
-  const here = /\btutaj|\btu$/.test(t)
-  const bt = matchBuildType(t.replace(/\s*\b(tutaj|tu)$/, ''))
-  if (!bt) { say('Co wystroic? dom, dom villagera, zamek, zamczysko, palac, palac endu, baza podziemna'); return }
-  const loc = whereIsBuild(bt, here, 'wystroj')
-  if (!loc) return
-  const { origin, front } = loc
-  const plan = decorPlan(bt.type)
-  if (!plan) { say(`Nie mam pomyslu na wystroj: ${bt.type}.`); return }
-  return task(`wystroj: ${bt.type}`, () => buildPlan(`wystroj (${bt.type})`, plan, origin, front, { decor: true, passes: 3, type: bt.type }))
 }
 
 // ---------- slup do nieba ----------
@@ -3228,15 +3267,15 @@ function buildCommand(text) {
   // najpierw wlasne projekty z kreatora (nazwa moze zaczynac sie jak wbudowana, np. "domek nad jeziorem")
   const design = findDesign(t)
   if (design) {
-    return task(`budowa: ${design.name}`, () => buildPlan(design.name, design.plan.map(c => ({ ...c })), ahead(design.ahead || 3), front, { type: design.key, passes: 6 }))
+    return task(`budowa: ${design.name}`, () => buildPlan(design.name, planWithDecor(design.key, design.plan.map(c => ({ ...c }))), ahead(design.ahead || 3), front, { type: design.key, passes: 6 }))
   }
 
-  if (/^(dom vil|dom wies|chat|chalupa)/.test(t)) return task('budowa domu villagera', () => buildPlan('dom villagera', planWithLadders('dom villagera', planVillagerHouse()), ahead(3), front, { type: 'dom villagera' }))
+  if (/^(dom vil|dom wies|chat|chalupa)/.test(t)) return task('budowa domu villagera', () => buildPlan('dom villagera', planWithDecor('dom villagera', planVillagerHouse()), ahead(3), front, { type: 'dom villagera' }))
   if (/^(baza pod|podziem|bunkier)/.test(t)) {
     return task('budowa bazy podziemnej', async () => {
       say('Kopie zejscie do bazy podziemnej.')
       for (let i = 0; i < 8 && running; i++) await stepTo(front, -1)
-      await buildPlan('baza podziemna', planUndergroundRoom(), bot.entity.position.floored().offset(front.x, 0, front.z), front, { type: 'baza podziemna' })
+      await buildPlan('baza podziemna', planWithDecor('baza podziemna', planUndergroundRoom()), bot.entity.position.floored().offset(front.x, 0, front.z), front, { type: 'baza podziemna' })
     })
   }
   if (/^(sky|baza w niebie|niebo|podniebn)/.test(t)) {
@@ -3268,12 +3307,12 @@ function buildCommand(text) {
   if (/^(palac endu|palac z end|endowy palac|palac end|end palac|palac purpur|palac kresu)/.test(t)) {
     return task('budowa palacu endu', async () => {
       if (!isCreative()) say('Uwaga: end stone, purpur i end rody sa tylko w Endzie - w survivalu bede potrzebowal ich w ekwipunku. W kreatywnym wezme je sam.')
-      await buildPlan('palac endu', planEndPalace(), ahead(4), front, { passes: 6, type: 'palac endu' })
+      await buildPlan('palac endu', planWithDecor('palac endu', planEndPalace()), ahead(4), front, { passes: 6, type: 'palac endu' })
     })
   }
-  if (/^zamczysk/.test(t)) return task('budowa zamczyska', () => buildPlan('zamczysko', planWithLadders('zamczysko', planBigCastle()), ahead(3), front, { type: 'zamczysko' }))
-  if (/^(palac|palacyk)/.test(t)) return task('budowa palacu', () => buildPlan('palac', planWithLadders('palac', planPalace()), ahead(3), front, { type: 'palac' }))
-  if (/^zam/.test(t)) return task('budowa zamku', () => buildPlan('zamek', planWithLadders('zamek', planCastle()), ahead(3), front, { type: 'zamek' }))
+  if (/^zamczysk/.test(t)) return task('budowa zamczyska', () => buildPlan('zamczysko', planWithDecor('zamczysko', planBigCastle()), ahead(3), front, { type: 'zamczysko' }))
+  if (/^(palac|palacyk)/.test(t)) return task('budowa palacu', () => buildPlan('palac', planWithDecor('palac', planPalace()), ahead(3), front, { type: 'palac' }))
+  if (/^zam/.test(t)) return task('budowa zamku', () => buildPlan('zamek', planWithDecor('zamek', planCastle()), ahead(3), front, { type: 'zamek' }))
   if (/^farm/.test(t)) {
     const what = t.replace(/^farm\w*\s*/, '')
     const crop = CROPS.find(([re]) => re.test(what))
@@ -3289,7 +3328,7 @@ function buildCommand(text) {
     say('Farma czego? farma zboza / marchwi / ziemniakow / burakow / drzew / trzciny / zwierzat')
     return
   }
-  if (/^(dom|baz|chat)/.test(t)) return task('budowa domu', () => buildPlan('dom', planWithLadders('dom', planHouse()), ahead(3), front, { type: 'dom' }))
+  if (/^(dom|baz|chat)/.test(t)) return task('budowa domu', () => buildPlan('dom', planWithDecor('dom', planHouse()), ahead(3), front, { type: 'dom' }))
   say('Co zbudowac? dom, zamek, zamczysko, palac, palac endu, dom villagera, baza podziemna, skybase, napis: <tekst>, farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>')
 }
 
@@ -3849,7 +3888,7 @@ function joinJob(name, job, auto) {
   if (job.kind === 'build' && planOf(job.type)) {
     say(`${tag}pomagam ${name} budowac: ${job.type}.`)
     return task(`pomoc w budowie (${job.type})`, () =>
-      buildPlan(`${job.type} (pomoc)`, planWithLadders(job.type, planOf(job.type)), origin, job.front,
+      buildPlan(`${job.type} (pomoc)`, planWithDecor(job.type, planOf(job.type)), origin, job.front,
         { type: job.type, helper: true, part: 'right', passes: job.type === 'palac endu' || !PLAN_FOR_TYPE[job.type] ? 6 : 4 }))
   }
   if (job.kind === 'decor' && decorPlan(job.type)) {
@@ -4164,7 +4203,7 @@ function continueCommand(user) {
   const job = last.job
   // budowa i wystroj: w tym samym miejscu i obrocie, materialy tylko na brakujace bloki
   if (job && (job.kind === 'build' || job.kind === 'decor') && planOf(job.type)) {
-    const plan = job.kind === 'decor' ? decorPlan(job.type) : planWithLadders(job.type, planOf(job.type))
+    const plan = job.kind === 'decor' ? decorPlan(job.type) : planWithDecor(job.type, planOf(job.type))
     say(`Kontynuuje: ${job.label || job.type}.`)
     lastCommand = null
     return task(`${job.kind === 'decor' ? 'wystroj' : 'budowa'}: ${job.type} (dalej)`, () =>
@@ -4246,15 +4285,58 @@ process.stdin.on('data', d => {
   stdinBuf = lines.pop()
   for (const line of lines) {
     if (line.startsWith('@@TEAM ')) { try { handleTeam(JSON.parse(line.slice(7))) } catch {} continue }
+    if (line.startsWith('@@AIREPLY ')) { try { aiReply(JSON.parse(line.slice(10))) } catch {} continue }
     if (line.trim()) handle(null, line)
   }
 })
+// gracze, ktorzy pisza jak boty (np. inny bot spoza programu, starsza wersja) - ich wiadomosci nie sa komendami
+const botLike = new Set()
 bot.on('chat', (user, msg) => {
   // inne boty z zespolu dostaja polecenia przez GUI, a nie przez czat - inaczej odpowiadalyby sobie w kolko
-  if (user === bot.username || team.has(user) || !isAllowed(user)) return
-  if (/Nie znam komendy|Napisz "komendy"/.test(msg)) return // odpowiedz innego bota, nie odbijamy jej
+  if (user === bot.username || team.has(user) || botLike.has(user) || !isAllowed(user)) return
+  if (/Nie znam komendy|Napisz "komendy"|^Gotowy\. Napisz/.test(msg)) {
+    // odpowiedz innego bota: nie odbijamy jej, a dalsze wiadomosci tego "gracza" pomijamy
+    if (!process.env.MC_PLAYER || user.toLowerCase() !== process.env.MC_PLAYER.toLowerCase()) botLike.add(user)
+    return
+  }
+  // komunikat serwera po komendzie gracza, np. "[Czarkonator: Teleported Czarkonator to Tester]"
+  if (/\]$/.test(msg) && !msg.includes('[')) return
+  // "ai ..." - zawsze pytanie do AI; "<nick>, ..." - komenda dla tego bota, a jak nie komenda - pytanie do AI
+  if (AI_ON && /^ai\b[,:]?\s+/i.test(msg) && aiAllowed(user)) { askAi(user, msg.replace(/^ai\b[,:]?\s+/i, '')); return }
+  const nickRe = new RegExp('^@?' + bot.username + '\\b[,:!]?\\s*', 'i')
+  if (nickRe.test(msg)) {
+    const rest = msg.replace(nickRe, '').trim()
+    if (!rest) return
+    aiAddressed = true
+    try { handle(user, rest) } finally { aiAddressed = false }
+    return
+  }
   handle(user, msg)
 })
+
+// ---------- AI w grze (MC_AI=1, tylko z programu): pytanie idzie do programu, odpowiedz wraca na wejscie jako @@AIREPLY ----------
+// Klucz API zostaje w programie. Pytac moze gracz z ustawien bota (LAN) albo osoby z permisja (serwer).
+const AI_ON = process.env.MC_AI === '1' && process.env.MC_GUI === '1'
+let aiAddressed = false // biezaca wiadomosc zaczynala sie od nicku bota
+let aiPending = null
+const aiAllowed = user => !!user && (LAN
+  ? (!process.env.MC_PLAYER || user.toLowerCase() === process.env.MC_PLAYER.toLowerCase())
+  : allowed.has(user.toLowerCase()))
+function askAi(user, text, whisper = false) {
+  if (aiPending && Date.now() - aiPending.at < 120000) { say('Chwila, jeszcze mysle nad poprzednim pytaniem.'); return }
+  aiPending = { id: Date.now().toString(36), at: Date.now(), user, whisper }
+  replyTo = whisper ? user : null
+  say('Hmm, chwila...')
+  process.stdout.write('@@AI ' + JSON.stringify({ id: aiPending.id, from: user, text }) + '\n')
+}
+function aiReply(msg) {
+  const p = aiPending
+  aiPending = null
+  if (p) replyTo = p.whisper ? p.user : null
+  // czat gry: bez formatowania, krotkie kawalki (najwyzej 4 wiadomosci)
+  const clean = String(msg.text || '').replace(/```[\s\S]*?```/g, ' ').replace(/[`*_#>]/g, '').replace(/\s+/g, ' ').trim()
+  for (const part of (clean.match(/.{1,230}(\s|$)/g) || []).slice(0, 4)) say(part.trim())
+}
 
 function stopAll() {
   running = false
@@ -4361,7 +4443,7 @@ function handleCommand(user, msg, whisper = false) {
   if (/^(poluj|upoluj)$/.test(verb)) return huntCommand(args)
   if (c === 'spij' || c === 'idz spac') return sleepCommand()
   if (/^(buduj|zbuduj|postaw budynek)$/.test(verb)) return buildCommand(args.join(' '))
-  if (/^(wystroj|udekoruj|urzadz|umebluj)$/.test(verb)) return decorCommand(args.join(' '))
+  if (/^(wystroj|udekoruj|urzadz|umebluj)$/.test(verb)) { say('Wystroj robie teraz od razu przy budowie: meble, lampy, dywany i obrazy sa w planie. Napisz "buduj <budowla>".'); return }
   if (/^(zburz|zniszcz)$/.test(verb) || /^usun budowl/.test(c)) return demolishCommand(args.join(' '))
   if (verb === 'usun' && args[0] && !findWaypoint(args.join(' ')) && matchBuildType(args.join(' '))) return demolishCommand(args.join(' '))
   if (/^(rozbierz|usun|posprzataj|sprzatnij) rusztowani/.test(c) || c === 'posprzataj') return cleanupCommand()
@@ -4419,6 +4501,8 @@ function handleCommand(user, msg, whisper = false) {
   if (talk) return say(talk[1](user))
 
   // nieznana komenda: odpowiadamy tylko na /msg i w konsoli, zeby nie odpowiadac na zwykla rozmowe na czacie
+  // AI w grze: niezrozumiala wiadomosc skierowana do bota (jego nick albo /msg) idzie do AI
+  if (AI_ON && user && (aiAddressed || whisper) && aiAllowed(user)) return askAi(user, text, whisper)
   const fromPlayer = !process.env.MC_PLAYER || user?.toLowerCase() === process.env.MC_PLAYER.toLowerCase()
   if (whisper || !user || (LAN && fromPlayer)) say(`Nie znam komendy "${text}". Napisz "komendy".`)
 }

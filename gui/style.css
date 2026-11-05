@@ -332,3 +332,8 @@ textarea:focus, .row input:focus { outline: none; border-color: var(--green); }
 .push-right { margin-left: auto; }
 .bot-btns .btn { white-space: nowrap; }
 .btn:disabled { opacity: .45; cursor: default; }
+.fields label.wide { grid-column: 1 / -1; }
+.fields label.check.wide { align-items: flex-start; }
+.fields label a { color: var(--blue); }
+#aiProvider { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; }
+.ai-model { margin-top: 4px; font-size: 11px; }

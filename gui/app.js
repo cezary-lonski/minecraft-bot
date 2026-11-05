@@ -225,7 +225,7 @@ B.on('status', s => {
 function renderTeam() {
   const others = [...running].filter(id => id !== selected)
   if (!selected || !others.length) {
-    $('teamList').innerHTML = '<span class="muted">Uruchom drugiego bota, żeby mogły współpracować: pomagać w budowie, burzeniu, wystroju i walce oraz wymieniać się przedmiotami.</span>'
+    $('teamList').innerHTML = '<span class="muted">Uruchom drugiego bota, żeby mogły współpracować: pomagać w budowie, burzeniu i walce oraz wymieniać się przedmiotami.</span>'
     return
   }
   const me = profile(selected)?.name
@@ -382,8 +382,7 @@ function renderBuild() {
       <div class="mat">📦 ${b.mat}</div>
       <div class="bbtns">
         <button class="btn primary small" data-cmd="buduj ${b.id}">Buduj</button>
-        ${b.decor ? `<button class="btn small" data-cmd="wystroj ${b.id}">Wystrój</button>
-        <button class="btn ghost small danger-text" data-cmd="zburz ${b.id}">Zburz</button>` : ''}
+        ${b.decor ? `<button class="btn ghost small danger-text" data-cmd="zburz ${b.id}">Zburz</button>` : ''}
       </div>
     </div>`).join('')
   $('farmChips').innerHTML = FARMS.map(f => `<button class="chip" data-cmd="${f.cmd}">${f.label}</button>`).join('')
@@ -443,9 +442,12 @@ function openModal(p) {
   $('modalTitle').textContent = p ? `Ustawienia: ${p.name}` : 'Nowy bot'
   for (const el of form.elements) {
     if (!el.name) continue
-    if (el.type === 'checkbox') el.checked = d[el.name] !== false && !!(d[el.name] ?? true)
+    if (el.name === 'aiChat') el.checked = !!d.aiChat // domyslnie wylaczone (zapytania do AI maja limit albo kosztuja)
+    else if (el.type === 'checkbox') el.checked = d[el.name] !== false && !!(d[el.name] ?? true)
     else el.value = d[el.name] ?? ''
   }
+  $('formAiKey').value = ''
+  B.aiKeys().then(k => { $('formAiKey').placeholder = k.gemini || k.claude ? `zapisany ✓ (${k.provider === 'claude' ? 'Claude' : 'Gemini'}) – zostaw puste albo wklej nowy` : 'AQ.… / AIza… (Gemini) albo sk-ant-… (Claude)' })
   form.elements.id.value = p ? p.id : ''
   $('btnDelete').classList.toggle('hidden', !p)
   $('btnSavePlay').textContent = p && running.has(p.id) ? 'Zapisz i uruchom ponownie' : 'Zapisz i graj'
@@ -465,6 +467,14 @@ async function saveForm() {
     p[el.name] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value.trim()
   }
   if (!p.id) delete p.id
+  // klucz AI nie jest czescia profilu - trafia zaszyfrowany do ustawien programu
+  const aiKey = $('formAiKey').value.trim()
+  if (aiKey) {
+    const k = await B.aiSetKey(aiKey)
+    if (!k.ok) { $('formMsg').textContent = k.error; return null }
+    if (typeof updateKeyState === 'function') updateKeyState()
+  }
+  if (p.aiChat && !aiKey && !(await B.aiHasKey())) { $('formMsg').textContent = 'AI w grze potrzebuje klucza – wklej klucz Gemini albo Claude.'; return null }
   const res = await B.saveProfile(p)
   if (!res.ok) { $('formMsg').textContent = res.error; return null }
   closeModal()

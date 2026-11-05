@@ -120,7 +120,7 @@
     <section class="view" id="view-build">
       <p class="lead">Polecenia trafiają do bota <b id="buildBotName">-</b>. Bot buduje <b>przed sobą</b> — w grze ustaw go przodem tam,
         gdzie ma stanąć budowla. Materiały zbiera sam (w kreatywnym bierze je z menu). Po budowie zostawia <b>czerwony znacznik</b>
-        w miejscu startu — stań na nim botem przy „Wystrój” i „Zburz”. Jeśli działa drugi bot, sam przyjdzie pomóc.</p>
+        w miejscu startu. Wnętrze urządza od razu przy budowie, a rusztowania stawia z ziemi i po budowie je usuwa. Jeśli działa drugi bot, sam przyjdzie pomóc.</p>
       <div class="build-grid" id="buildGrid"></div>
 
       <div class="card">
@@ -170,7 +170,7 @@
             <button class="btn" id="crBuild" title="Zapisuje i każe wybranemu botowi budować">🏗 Zbuduj</button>
           </div>
           <p class="hint">Bot buduje <b>przed sobą</b>: ustaw go w grze przodem tam, gdzie ma stanąć budowla. Zapisany projekt
-            zbudujesz też komendą <code>buduj &lt;nazwa&gt;</code> (działa w grze i dla każdego bota). <code>wystrój</code>,
+            zbudujesz też komendą <code>buduj &lt;nazwa&gt;</code> (działa w grze i dla każdego bota). 
             <code>zburz</code> i <code>kontynuuj</code> też działają.</p>
         </div>
         <div class="card cr-view">
@@ -206,11 +206,16 @@
           </div>
         </div>
         <div id="aiKeyBox" class="ai-key hidden">
-          <p>Asystent korzysta z <b>Claude</b> (Anthropic). Potrzebny jest klucz API z
-            <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a> – zapytania są płatne
-            (zwykle grosze za pytanie, więcej za duże budowle). Klucz zapisuje się zaszyfrowany na tym komputerze.</p>
-          <div class="row"><input id="aiKey" type="password" placeholder="sk-ant-..."><button class="btn primary" id="aiKeySave">Zapisz klucz</button><button class="btn ghost" id="aiKeyDel">Usuń</button></div>
-          <p class="hint">Bez klucza asystent podpowiada komendy z listy, a Kreator budowli działa normalnie (bez AI).</p>
+          <p>Asystent (i AI w grze) działa na <b>Gemini</b> od Google – klucz z
+            <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>, darmowy limit dzienny –
+            albo na <b>Claude</b> od Anthropic – klucz z <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>,
+            zapytania płatne. Klucze zapisują się zaszyfrowane na tym komputerze.</p>
+          <div class="row">
+            <select id="aiProvider"><option value="gemini">Gemini (Google)</option><option value="claude">Claude (Anthropic)</option></select>
+            <input id="aiKey" type="password" placeholder="wklej klucz: AQ.… / AIza… (Gemini) albo sk-ant-… (Claude)">
+            <button class="btn primary" id="aiKeySave">Zapisz klucz</button><button class="btn ghost" id="aiKeyDel">Usuń</button>
+          </div>
+          <p class="hint" id="aiKeyInfo">Bez klucza asystent podpowiada komendy z listy, a Kreator budowli działa normalnie (bez AI).</p>
         </div>
         <div id="aiMsgs" class="ai-msgs"></div>
         <div class="chips small-chips" id="aiExamples"></div>
@@ -311,6 +316,10 @@
         <label>Jedz, gdy głód/zdrowie poniżej<input name="eatBelow" type="number" min="2" max="20"></label>
         <label>Odstęp między wiadomościami (ms)<input name="chatDelay" placeholder="puste = domyślnie"></label>
         <label class="check"><input name="autoHelp" type="checkbox"> Sam pomaga innym botom</label>
+        <label class="check wide"><input name="aiChat" type="checkbox"><span>🤖 <b>AI w grze</b> – gdy napiszesz jego nick (np. „Claude, zbuduj coś fajnego obok domu”)
+          albo „ai …”, odpowiada na czacie i sam działa: wydaje sobie komendy, projektuje i stawia budowle, uczy się komend</span></label>
+        <label class="wide"><span>Klucz AI (wspólny dla wszystkich botów) – Gemini z <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> (darmowy limit) albo Claude</span>
+          <input id="formAiKey" type="password" autocomplete="off" placeholder="AQ.… / AIza… / sk-ant-…"></label>
         <label class="check srv-only"><input name="rtp" type="checkbox"> Używaj /rtp, gdy brak surowca</label>
       </div>
       <p class="hint lan-only">W grze: Esc → Open to LAN → Start LAN World. Port pojawi się na czacie (przy każdym otwarciu może być inny).</p>

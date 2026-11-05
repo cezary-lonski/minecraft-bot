@@ -26,7 +26,9 @@ contextBridge.exposeInMainWorld('bridge', {
   deleteCommand: key => ipcRenderer.invoke('commands:delete', key),
   // asystent AI
   aiHasKey: () => ipcRenderer.invoke('ai:hasKey'),
-  aiSetKey: key => ipcRenderer.invoke('ai:setKey', key),
+  aiSetKey: (key, provider) => ipcRenderer.invoke('ai:setKey', key, provider),
+  aiKeys: () => ipcRenderer.invoke('ai:keys'),
+  aiSetProvider: p => ipcRenderer.invoke('ai:setProvider', p),
   aiChat: (text, botId) => ipcRenderer.invoke('ai:chat', text, botId),
   aiReset: () => ipcRenderer.invoke('ai:reset'),
   on: (channel, cb) => {

@@ -19,7 +19,7 @@ Wchodzi do gry jako osobny gracz i wykonuje polecenia wydawane **po polsku na cz
 - dba o siebie: je, ucieka z lawy i przed wardenem, walczy albo ucieka przed mobami, odblokowuje się,
 - obsługuje tryb kreatywny (bierze bloki z menu i lata przy budowie),
 - rozmawia: odpowiada na „elo", „co tam", „dzięki"…
-- **kilka botów naraz** — pomagają sobie w budowie, wystroju, burzeniu i walce, wymieniają się przedmiotami,
+- **kilka botów naraz** — pomagają sobie w budowie, burzeniu i walce, wymieniają się przedmiotami,
 - ma **program z oknem (centrum sterowania)**: lista botów, panel ze stanem i ekwipunkiem, czat z podpowiedziami komend,
   przyciski budowli i automatyczne aktualizacje,
 - **Kreator budowli**: opisujesz budowlę słowami („dwupiętrowy dom z cegły z czerwonym dachem i ogrodem”), widzisz podgląd 3D
@@ -70,7 +70,7 @@ W zakładce **Graj** każdy bot ma własną kartę i własną pamięć świata: 
 (po ponownym uruchomieniu zapyta, czy kontynuować). Możesz uruchomić kilka botów jednocześnie — przełączasz się między nimi
 zakładkami w **Panelu bota**. Boty uruchomione z programu tworzą **zespół**:
 
-- **Pomoc w pracy:** gdy jeden bot buduje (`buduj zamek`), wystraja, burzy albo walczy, drugi może dołączyć — komenda
+- **Pomoc w pracy:** gdy jeden bot buduje (`buduj zamek`), burzy albo walczy, drugi może dołączyć — komenda
   `pomóż` (albo `pomóż <bot>`) lub przycisk w karcie **Zespół**. Przy budowie pomocnik bierze prawą połowę budowli.
 - **Same proszą o pomoc:** bot z dużą pracą albo w trudnej walce woła pozostałe; przychodzi ten, który akurat nic nie robi
   (do wyłączenia w ustawieniach bota: „Sam pomaga innym botom").
@@ -91,20 +91,36 @@ wiatrak, most, studnię, altanę, igloo, arenę; rozmiar (*mały, duży, ogromny
 pustynny, zimowy, netherowy, z Endu, podwodny, bajkowy, wiejski, królewski, gotycki*); dodatki (*komin, ganek, balkon, kolumny,
 taras, blanki, iglica, kopuła, wieże, ogród, kwiaty, drzewa, latarnie*).
 
-Zapisane projekty są wspólne dla wszystkich botów. W grze: `projekty` (lista), `buduj <nazwa>`, `wystrój <nazwa>`, `zburz <nazwa>`,
+Zapisane projekty są wspólne dla wszystkich botów. W grze: `projekty` (lista), `buduj <nazwa>` (od razu z wystrojem pokoi), `zburz <nazwa>`,
 `kontynuuj`. Drugi bot pomaga przy nich tak samo jak przy wbudowanych budowlach.
 
 ## Asystent AI
-Zakładka **🤖 Asystent AI** — rozmowa z Claude (model Claude Opus 5.5 firmy Anthropic):
+Zakładka **🤖 Asystent AI** — rozmowa z AI w programie:
 - pytasz, jak coś zrobić botem, a asystent podaje gotowe komendy (kliknięcie wstawia komendę do panelu bota),
 - *„dodaj budowlę kurczak – ma wyglądać jak mały kurczak z Minecrafta”* — projektuje dowolny kształt (posągi, zwierzęta,
   statki…) i zapisuje go w Kreatorze,
 - *„stwórz komendę owce: znajdź owcę i ją ogródź”* — układa nową komendę z kroków,
 - *„niech Claude zbuduje kurczaka”* — wysyła polecenie do działającego bota.
 
-Potrzebny jest **klucz API** z [console.anthropic.com](https://console.anthropic.com/settings/keys) (🔑 w zakładce asystenta).
-Zapytania są płatne według cennika Anthropic. Klucz jest zapisany na komputerze w postaci zaszyfrowanej przez Windows.
-Bez klucza asystent tylko podpowiada komendy z listy, a Kreator budowli działa normalnie.
+Do wyboru są dwa silniki — wystarczy wkleić klucz (w zakładce asystenta 🔑 albo w ustawieniach bota), program sam rozpozna, czyj jest:
+- **Gemini** (Google) — klucz z [aistudio.google.com/apikey](https://aistudio.google.com/apikey), **darmowy dzienny limit**.
+  Program sam wybiera najnowszy model Flash dostępny dla klucza, a gdy któryś ma wyczerpany limit albo jest przeciążony,
+  przechodzi na kolejny (np. 3.8 → 3.7 → 3.6 → 3.5 Flash → wersje Lite). Aktualne limity konta widać w AI Studio.
+- **Claude** (Anthropic, Claude Opus 5.5) — klucz z [console.anthropic.com](https://console.anthropic.com/settings/keys), zapytania płatne.
+
+Klucze są zapisane na komputerze w postaci zaszyfrowanej przez Windows i nie trafiają do gry. Bez klucza asystent tylko
+podpowiada komendy z listy, a Kreator budowli działa normalnie.
+
+### AI w grze
+W ustawieniach bota zaznacz **🤖 AI w grze** (i wklej klucz, jeśli jeszcze go nie ma), potem uruchom bota. Na czacie gry:
+- `ai <pytanie>` — np. `ai jak pokonać smoka?` — bot odpowiada na czacie,
+- `<nick bota>, <prośba>` — np. `Claude, zbuduj obok domu coś fajnego` albo `Claude, naucz się zbierać jabłka`.
+  Jeśli to zwykła komenda (`Claude, zdobądź drewno 10`), bot ją po prostu wykona; jeśli nie — pyta AI, a ono samo
+  wydaje botowi komendy, projektuje i stawia budowle albo uczy go nowych komend,
+- na serwerze działa też `/msg <nick bota> <prośba>`.
+
+Pytać może tylko gracz z ustawień bota („Twój nick w grze”), a na serwerze — właściciel i osoby z `permisja`, więc inni gracze
+ani inne boty nie zużyją limitu. Komendy serwera z `/` są dla AI zablokowane.
 
 ## Własne komendy
 Zakładka **⚡ Moje komendy** albo czat gry: `naucz się <nazwa>: krok; krok; krok`. Komenda to lista kroków — każdy krok to zwykła
@@ -273,7 +289,7 @@ miska, butelka, łódka, wózek, tory, książka, papier, cukier, dźwignia, prz
 ### Zespół (kilka botów)
 | Komenda | Działanie |
 |---|---|
-| `pomóż` | dołącza do pracy innego bota: budowy, wystroju, burzenia albo walki |
+| `pomóż` | dołącza do pracy innego bota: budowy, burzenia albo walki |
 | `pomóż <bot>` | pomaga konkretnemu botowi |
 | `poproś <bot> o <co> [ile]` | prosi innego bota o przedmioty — przyniesie je i wyrzuci |
 
@@ -324,11 +340,18 @@ Bot buduje **przed sobą** — ustaw go przodem tam, gdzie ma stanąć budowla. 
 Duże budowle (ponad 600 bloków) bot buduje partiami: zbiera materiał na kolejne 3 warstwy, buduje je i wraca po następne.
 
 ### Wystrój, burzenie, rusztowania
+**Wystrój jest częścią budowy:** bot od razu urządza wnętrze — drabiny, latarnie / end rody pod stropem, stół z krzesłami, warsztat,
+piec, wędzarnia, skrzynie, łóżko, regały, biblioteka (pałac Endu), dywany, obrazy. Meble to ozdoby: w survivalu bot zapyta, czy po
+nie iść, czy budować bez nich. Lampy wiszące i obrazy stawia na końcu, gdy stoją już stropy i ściany.
+
+**Rusztowania są zawsze z ziemi** (przed budową bot zbiera ziemię, w kreatywnym bierze ją z menu). Po budowie bot pyta, czy je rozebrać,
+i usuwa całą lewitującą ziemię od pierwszego bloku nad gruntem w górę — w obrysie budowli i do 4 bloków dookoła. Zostaje ziemia
+należąca do budowli i naturalne pagórki przykryte trawą.
+
 | Komenda | Działanie |
 |---|---|
-| `wystrój <budowla>` (`udekoruj`, `umebluj`) | urządza wnętrze: drabiny, latarnie / end rody pod stropem, stół z krzesłami, warsztat, piec, wędzarnia, skrzynie, łóżko, regały, biblioteka (pałac Endu), dywany, obrazy. Wstawia tylko w puste miejsca |
 | `zburz <budowla>` (`usuń budowlę <budowla>`) | po potwierdzeniu rozbiera budowlę i jej wystrój od góry; terenu dookoła nie rusza |
-| `rozbierz rusztowania` | usuwa słupki rusztowań w promieniu 20 bloków, nie ruszając murów i blanków |
+| `rozbierz rusztowania` | usuwa lewitującą ziemię przy najbliższej zapamiętanej budowli (albo 20 bloków wokół bota) |
 
 Budowle: `dom`, `dom villagera`, `zamek`, `zamczysko`, `pałac`, `pałac endu`, `baza podziemna`.
 Bot pamięta, gdzie postawił budowlę (`builds.json`). Dla budowli, których nie pamięta, postaw go tam, gdzie zaczynał budowę —
@@ -363,10 +386,10 @@ albo przy pałacu Endu **na najwyższym end rodzie środkowej iglicy** — a sam
 - **Skrzynie (LAN):** w trakcie zadań zagląda do znalezionych skrzyń i bierze lepsze narzędzia, zbroję, cenne rzeczy i jedzenie.
 - **Odblokowywanie:** wbity w blok — wykopuje się; zaklinowany — podskakuje i szuka nowej drogi; na drabinie — wspina się.
 - **Pełny ekwipunek:** wyrzuca śmieci, ale nigdy materiałów aktualnej budowy.
-- **Rusztowania:** po budowie proponuje ich rozebranie.
+- **Rusztowania:** stawia je tylko z ziemi, a po budowie proponuje ich rozebranie (znika cała lewitująca ziemia).
 - **Nie niszczy swoich budowli:** w drodze po surowce omija postawione budowle zamiast się przez nie przekopywać, a `zdobądź`
   nie rozbiera np. zamku z bruku. Działa też dla budowli kolegi, przy której pomaga.
-- **Znacznik startu:** w miejscu, z którego zaczął budowę, stawia czerwony blok — stań na nim botem przy `wystrój` i `zburz`.
+- **Znacznik startu:** w miejscu, z którego zaczął budowę, stawia czerwony blok — stań na nim botem przy `zburz`, gdy bot nie pamięta budowli.
 
 ## Tryb kreatywny
 Gdy bot jest w kreatywnym (`/gamemode creative <nick bota>`), nie zbiera surowców — bierze bloki i przedmioty z menu

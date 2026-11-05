@@ -297,6 +297,7 @@ function mdLite(t) {
     .replace(/```([\s\S]*?)```/g, (m, c) => `<pre>${c.trim()}</pre>`)
     .replace(/`([^`]+)`/g, '<code class="cmd-code" title="Kliknij, żeby wstawić">$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/\*([^*\n]+)\*/g, '<i>$1</i>')
     .replace(/\n/g, '<br>')
 }
 function aiAdd(kind, html) {
@@ -348,7 +349,7 @@ async function askAi(text) {
   aiBusy = false
   $('aiSend').disabled = false
   if (!res.ok) { aiAdd('bot err', esc(res.error)); return }
-  aiAdd('bot', mdLite(res.text))
+  aiAdd('bot', mdLite(res.text) + (res.model ? `<div class="muted small ai-model">${esc(res.model)}</div>` : ''))
 }
 $('aiSend').addEventListener('click', () => askAi($('aiText').value))
 $('aiText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askAi($('aiText').value) } })
@@ -377,18 +378,24 @@ B.on('ai-event', ev => {
 function showKeyBox(show) { $('aiKeyBox').classList.toggle('hidden', !show) }
 $('aiKeyBtn').addEventListener('click', () => showKeyBox($('aiKeyBox').classList.contains('hidden')))
 $('aiKeySave').addEventListener('click', async () => {
+  // rodzaj klucza program rozpozna sam (Gemini / Claude) i przelaczy asystenta na ten silnik
   const r = await B.aiSetKey($('aiKey').value)
   if (!r.ok) { toast(r.error, 'err'); return }
   $('aiKey').value = ''
   showKeyBox(false)
   updateKeyState()
-  toast('Klucz zapisany', 'ok')
+  toast(`Klucz ${r.provider === 'claude' ? 'Claude' : 'Gemini'} zapisany`, 'ok')
 })
-$('aiKeyDel').addEventListener('click', async () => { await B.aiSetKey(''); updateKeyState(); toast('Klucz usunięty') })
+$('aiKeyDel').addEventListener('click', async () => { await B.aiSetKey('', $('aiProvider').value); updateKeyState(); toast('Klucz usunięty') })
+$('aiProvider').addEventListener('change', async e => { await B.aiSetProvider(e.target.value); await B.aiReset(); updateKeyState() })
+const PROVIDER_PL = { gemini: 'Gemini (najnowszy Flash)', claude: 'Claude Opus 5.5' }
 async function updateKeyState() {
-  const has = await B.aiHasKey()
-  $('aiModel').textContent = has ? 'Claude Opus 5.5 · połączony' : 'bez klucza – tylko podpowiedzi z listy'
+  const k = await B.aiKeys()
+  const has = k[k.provider]
+  $('aiProvider').value = k.provider
+  $('aiModel').textContent = has ? `${PROVIDER_PL[k.provider]} · połączony` : `${PROVIDER_PL[k.provider]} – brak klucza, tylko podpowiedzi z listy`
   $('aiKeyBtn').textContent = has ? '🔑 Klucz API ✓' : '🔑 Dodaj klucz API'
+  $('aiKeyInfo').textContent = `Zapisane klucze: Gemini ${k.gemini ? '✓' : '–'}, Claude ${k.claude ? '✓' : '–'}. Bez klucza asystent podpowiada komendy z listy, a Kreator budowli działa normalnie.`
   if (!has) showKeyBox(true)
 }
 
