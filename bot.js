@@ -4510,8 +4510,8 @@ function handleCommand(user, msg, whisper = false) {
   if (talk) return say(talk[1](user))
 
   // nieznana komenda: odpowiadamy tylko na /msg i w konsoli, zeby nie odpowiadac na zwykla rozmowe na czacie
-  // AI w grze: niezrozumiala wiadomosc skierowana do bota (jego nick albo /msg) idzie do AI
-  if (AI_ON && user && (aiAddressed || whisper) && aiAllowed(user)) return askAi(user, text, whisper)
+  // AI w grze: niezrozumiala wiadomosc do bota (jego nick, /msg, a w LAN kazda od gracza z ustawien) idzie do AI
+  if (AI_ON && user && (aiAddressed || whisper || (LAN && process.env.MC_PLAYER)) && aiAllowed(user)) return askAi(user, text, whisper)
   const fromPlayer = !process.env.MC_PLAYER || user?.toLowerCase() === process.env.MC_PLAYER.toLowerCase()
   if (whisper || !user || (LAN && fromPlayer)) say(`Nie znam komendy "${text}". Napisz "komendy".`)
 }

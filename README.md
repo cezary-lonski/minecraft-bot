@@ -116,7 +116,8 @@ podpowiada komendy z listy, a Kreator budowli działa normalnie.
 
 ### AI w grze
 W ustawieniach bota zaznacz **🤖 AI w grze** (i wklej klucz, jeśli jeszcze go nie ma), potem uruchom bota. Na czacie gry:
-- `ai <pytanie>` — np. `ai jak pokonać smoka?` — bot odpowiada na czacie,
+- w świecie LAN wystarczy pisać normalnie (np. `halo`, `jak pokonać smoka?`) — wiadomość od Ciebie, która nie jest komendą, idzie do AI;
+  działa też `ai <pytanie>`,
 - `<nick bota>, <prośba>` — np. `Claude, zbuduj obok domu coś fajnego` albo `Claude, naucz się zbierać jabłka`.
   Jeśli to zwykła komenda (`Claude, zdobądź drewno 10`), bot ją po prostu wykona; jeśli nie — pyta AI, a ono samo
   wydaje botowi komendy, projektuje i stawia budowle albo uczy go nowych komend,
