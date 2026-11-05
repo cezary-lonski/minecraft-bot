@@ -1,5 +1,12 @@
 # Claude — bot do Minecrafta (beta)
 
+## ⬇ [Pobierz program dla Windows (Minecraft-Bot-Setup.exe)](https://github.com/cezary-lonski/minecraft-bot/releases/latest/download/Minecraft-Bot-Setup.exe)
+
+Uruchom pobrany plik, a potem w programie kliknij **Graj → Nowy bot**. Nie trzeba instalować Node.js ani niczego wpisywać
+(szczegóły: [Najprościej: program dla Windows](#najprościej-program-dla-windows)). Wszystkie wersje: [Releases](https://github.com/cezary-lonski/minecraft-bot/releases).
+
+---
+
 Bot do **Minecraft Java Edition** napisany w Node.js na bibliotece [Mineflayer](https://github.com/PrismarineJS/mineflayer).
 Wchodzi do gry jako osobny gracz i wykonuje polecenia wydawane **po polsku na czacie**.
 
@@ -47,8 +54,8 @@ Wchodzi do gry jako osobny gracz i wykonuje polecenia wydawane **po polsku na cz
 ## Najprościej: program dla Windows
 Nie trzeba instalować Node.js ani niczego wpisywać w PowerShellu — instalator ma w sobie wszystkie biblioteki.
 
-1. Wejdź w [Releases](https://github.com/cezary-lonski/minecraft-bot/releases) i pobierz najnowszy plik
-   **`Minecraft-Bot-Setup-….exe`**.
+1. Pobierz **[Minecraft-Bot-Setup.exe](https://github.com/cezary-lonski/minecraft-bot/releases/latest/download/Minecraft-Bot-Setup.exe)**
+   (najnowsza wersja; starsze są w [Releases](https://github.com/cezary-lonski/minecraft-bot/releases)).
 2. Uruchom go. Windows może pokazać „System Windows ochronił ten komputer" (program nie ma płatnego podpisu) —
    kliknij **Więcej informacji → Uruchom mimo to**. Instalacja trwa kilka sekund, a na Pulpicie pojawi się skrót **Minecraft Bot**.
 3. W Minecrafcie otwórz świat na LAN (**Esc → Open to LAN → Start LAN World**) i zapamiętaj port z czatu.
@@ -357,6 +364,8 @@ albo przy pałacu Endu **na najwyższym end rodzie środkowej iglicy** — a sam
 - **Odblokowywanie:** wbity w blok — wykopuje się; zaklinowany — podskakuje i szuka nowej drogi; na drabinie — wspina się.
 - **Pełny ekwipunek:** wyrzuca śmieci, ale nigdy materiałów aktualnej budowy.
 - **Rusztowania:** po budowie proponuje ich rozebranie.
+- **Nie niszczy swoich budowli:** w drodze po surowce omija postawione budowle zamiast się przez nie przekopywać, a `zdobądź`
+  nie rozbiera np. zamku z bruku. Działa też dla budowli kolegi, przy której pomaga.
 - **Znacznik startu:** w miejscu, z którego zaczął budowę, stawia czerwony blok — stań na nim botem przy `wystrój` i `zburz`.
 
 ## Tryb kreatywny

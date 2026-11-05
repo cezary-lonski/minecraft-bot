@@ -167,7 +167,7 @@ function ripeOrNotCrop(p) {
 function findBlocks(names, max = 32, dist = 64) {
   const ids = names.map(n => mcData.blocksByName[n]?.id).filter(x => x !== undefined)
   return bot.findBlocks({ matching: ids, maxDistance: dist, count: max + unreachable.size + 32 })
-    .filter(p => !unreachable.has(posKey(p)) && ripeOrNotCrop(p) && !nearDangerZone(p, 24))
+    .filter(p => !unreachable.has(posKey(p)) && ripeOrNotCrop(p) && !nearDangerZone(p, 24) && !isBuilt(p))
     .slice(0, max)
 }
 
@@ -809,6 +809,30 @@ setInterval(survivalTick, 400)
 // pozycje stawianych wlasnie blokow budowli - tych przy odblokowywaniu nie kopiemy
 const noDigPositions = new Set()
 
+// bloki postawionych budowli (z builds.json, razem z wystrojem): pathfinder nie kopie przez nie drogi,
+// odblokowywanie ich nie rusza, a "zdobadz bruk" nie rozbiera zamku z bruku
+let builtCache = null
+function builtPositions() {
+  if (builtCache) return builtCache
+  builtCache = new Set()
+  for (const r of builds) {
+    try {
+      const o = new Vec3(r.origin.x, r.origin.y, r.origin.z)
+      for (const c of [...(planOf(r.type) || []), ...(decorPlan(r.type) || [])]) {
+        if (c.block !== 'air' && !c.temp) builtCache.add(posKey(toWorld(o, r.front, c.x, c.y, c.z)))
+      }
+    } catch (e) { console.log('[bot] ochrona budowli:', e.message) }
+  }
+  return builtCache
+}
+const forgetBuiltCache = () => { builtCache = null }
+const isBuilt = p => noDigPositions.has(posKey(p)) || builtPositions().has(posKey(p))
+// ruchy pathfindera, ktore omijaja budowle zamiast je przekopywac
+function protectBuilds(moves) {
+  moves.exclusionAreasBreak.push(b => isBuilt(b.position) ? 1000 : 0)
+  return moves
+}
+
 // blok, ktorego ksztalt naprawde nachodzi na cialo bota (0.6 x 1.8) - wtedy bot jest w nim "wbity"
 // drabiny i pnacza: bot na nich wisi, wiec nie sa ani przeszkoda, ani rzecza do wykopania
 const CLIMBABLE = ['ladder', 'vine', 'scaffolding', 'twisting_vines', 'weeping_vines', 'cave_vines']
@@ -860,7 +884,7 @@ async function unstickTick() {
 
   unsticking = true
   try {
-    const canBreak = b => b && b.boundingBox === 'block' && bot.canDigBlock(b) && !noDigPositions.has(posKey(b.position)) && !CLIMBABLE.includes(b.name) &&
+    const canBreak = b => b && b.boundingBox === 'block' && bot.canDigBlock(b) && !isBuilt(b.position) && !CLIMBABLE.includes(b.name) &&
       !/_door$|_fence_gate$|chest|furnace|crafting_table|bed$/.test(b.name)
     if (inside) {
       console.log(`[bot] jestem wbity w ${inside.name} - wykopuje sie`)
@@ -1351,7 +1375,7 @@ function sendChat(text) {
 
 bot.once('spawn', () => {
   mcData = require('minecraft-data')(bot.version)
-  const moves = new Movements(bot)
+  const moves = protectBuilds(new Movements(bot))
   moves.canDig = true
   moves.allow1by1towers = true
   bot.pathfinder.setMovements(moves)
@@ -2096,7 +2120,7 @@ function looseColumns(x1, x2, z1, z2, y1, y2) {
 // rozbieranie bez kopania przez mury: pathfinder nie moze niczego niszczyc ani stawiac nowych slupkow,
 // a kopie tylko sam slupek. Czego nie da sie dosiegnac - zostaje.
 async function removeBlocksCarefully(positions) {
-  const careful = new Movements(bot)
+  const careful = protectBuilds(new Movements(bot))
   careful.canDig = false
   careful.allow1by1towers = false
   const normal = bot.pathfinder.movements
@@ -2212,8 +2236,9 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
   const batched = solidCells.length > BATCH_LIMIT
   for (const c of solidCells) protectedItems.add(WOOD_RE.test(c.block) ? 'log' : c.block)
   for (const c of solidCells) noDigPositions.add(posKey(c.pos)) // odblokowywanie nie rusza budowli
-  // wystroj: nietykalna jest cala budowla (sciany, stropy, dach) - zaklinowany przy stawianiu dywanu bot nie kopie sufitu
-  if (opts.decor && opts.type) {
+  // cala budowla (sciany, stropy, dach, tez polowa kolegi) jest nietykalna - zaklinowany bot nie kopie sufitu,
+  // a w drodze po material nie przekopuje sie przez mury
+  if (opts.type) {
     for (const c of planOf(opts.type) || []) if (c.block !== 'air') noDigPositions.add(posKey(toWorld(origin, front, c.x, c.y, c.z)))
   }
   const normalMoves = bot.pathfinder.movements
@@ -2252,7 +2277,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
     if (!wantExtras) for (const c of cells) if (c.optional && haveOf(c.block) < cells.filter(o => o.block === c.block).length) c.block = 'air'
 
     // budujemy bez kopania przez wlasne sciany (kopiemy tylko przy przygotowaniu terenu i zbieraniu)
-    const buildMoves = new Movements(bot)
+    const buildMoves = protectBuilds(new Movements(bot))
     buildMoves.canDig = false
     buildMoves.allow1by1towers = true
     const total = cells.filter(c => c.block !== 'air').length
@@ -2689,6 +2714,7 @@ const builds = loadJson('builds.json', [])
 function recordBuild(type, origin, front) {
   builds.push({ type, origin: { x: origin.x, y: origin.y, z: origin.z }, front, dim: bot.game?.dimension, at: Date.now() })
   saveJson('builds.json', builds)
+  forgetBuiltCache()
 }
 
 // typy budowli: rozpoznanie z tekstu i odleglosc poczatku planu przed botem
@@ -3008,6 +3034,7 @@ function demolishCommand(text) {
       say(`Zburzylem ${bt.type} (${removed} blokow).`)
       for (let i = builds.length - 1; i >= 0; i--) if (builds[i].type === bt.type && builds[i].origin.x === loc.origin.x && builds[i].origin.z === loc.origin.z) builds.splice(i, 1)
       saveJson('builds.json', builds)
+      forgetBuiltCache()
     }
   })
 }
