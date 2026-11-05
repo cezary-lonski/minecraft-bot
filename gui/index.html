@@ -323,6 +323,18 @@
           <input id="formAiKey" type="password" autocomplete="off" placeholder="AQ.… / AIza… / sk-ant-…"></label>
         <label class="check srv-only"><input name="rtp" type="checkbox"> Używaj /rtp, gdy brak surowca</label>
       </div>
+      <div class="skin-box" id="skinBox">
+        <canvas id="skinHead" width="64" height="64"></canvas>
+        <div class="skin-text">
+          <b>Skin bota</b>
+          <div id="skinInfo" class="muted small">Zapisz bota, żeby dodać skin.</div>
+          <div class="row">
+            <button type="button" class="btn small" id="btnSkin">📁 Importuj skin (PNG)</button>
+            <button type="button" class="btn ghost small hidden" id="btnSkinDel">Usuń skin</button>
+            <button type="button" class="btn ghost small" id="btnSkinPacks" title="Folder paczek zasobów Minecrafta">📂 Paczki zasobów</button>
+          </div>
+        </div>
+      </div>
       <p class="hint lan-only">W grze: Esc → Open to LAN → Start LAN World. Port pojawi się na czacie (przy każdym otwarciu może być inny).</p>
       <div class="actions">
         <button type="submit" class="btn primary">💾 Zapisz</button>

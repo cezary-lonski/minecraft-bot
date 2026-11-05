@@ -57,7 +57,7 @@ async function renderBots() {
       m.lastTask ? `⏸ przerwane: „${esc(m.lastTask.cmd)}”` : ''
     ].filter(Boolean).join(' · ') || 'Jeszcze nic nie zbudował.'
     return `<div class="bot-card ${on ? 'on' : ''} ${p.id === selected ? 'sel' : ''}" data-id="${p.id}">
-      <div class="avatar" style="background:${colorFor(p.name)}">${esc(p.name[0].toUpperCase())}</div>
+      ${p.skin ? '<canvas class="avatar skin-avatar" width="64" height="64"></canvas>' : `<div class="avatar" style="background:${colorFor(p.name)}">${esc(p.name[0].toUpperCase())}</div>`}
       <div class="bot-info">
         <div class="bot-name">${esc(p.name)} ${on ? `<span class="badge">${s?.connected ? 'w grze' : 'łączy…'}</span>` : ''}</div>
         <div class="muted">${where}</div>
@@ -73,6 +73,38 @@ async function renderBots() {
   }).join('') + `<div class="bot-card new" data-act="new"><div class="avatar plus">＋</div><div class="bot-info"><div class="bot-name">Nowy bot</div>
     <div class="muted">Stwórz zupełnie nowego bota z własnym nickiem i światem</div></div></div>`
   $('btnStopAll').classList.toggle('hidden', running.size < 2)
+  // glowy ze skinow na kartach
+  document.querySelectorAll('#botGrid .bot-card').forEach(card => {
+    const p = profile(card.dataset.id)
+    const c = card.querySelector('canvas.skin-avatar')
+    if (p?.skin && c) drawSkinHead(c, p.skin)
+  })
+}
+
+// glowa ze skina (twarz 8x8 + warstwa czapki), powiekszona bez rozmywania; zwraca, czy skin ma szczuple rece
+function drawSkinHead(canvas, dataUrl) {
+  return new Promise(resolve => {
+    const img = new Image()
+    img.onload = () => {
+      const ctx = canvas.getContext('2d')
+      ctx.imageSmoothingEnabled = false
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(img, 8, 8, 8, 8, 0, 0, canvas.width, canvas.height)
+      ctx.drawImage(img, 40, 8, 8, 8, 0, 0, canvas.width, canvas.height)
+      // szczuply skin (Alex): rece maja 3 piksele - kolumny 54-55 przy prawej rece sa przezroczyste
+      let slim = false
+      try {
+        const t = document.createElement('canvas')
+        t.width = 64; t.height = 64
+        const tc = t.getContext('2d', { willReadFrequently: true })
+        tc.drawImage(img, 0, 0)
+        slim = img.height === 64 && tc.getImageData(54, 20, 1, 1).data[3] === 0 && tc.getImageData(55, 20, 1, 1).data[3] === 0
+      } catch {}
+      resolve({ slim })
+    }
+    img.onerror = () => resolve({ slim: false })
+    img.src = dataUrl
+  })
 }
 
 $('botGrid').addEventListener('click', async e => {
@@ -450,6 +482,7 @@ function openModal(p) {
   B.aiKeys().then(k => { $('formAiKey').placeholder = k.gemini || k.claude ? `zapisany ✓ (${k.provider === 'claude' ? 'Claude' : 'Gemini'}) – zostaw puste albo wklej nowy` : 'AQ.… / AIza… (Gemini) albo sk-ant-… (Claude)' })
   form.elements.id.value = p ? p.id : ''
   $('btnDelete').classList.toggle('hidden', !p)
+  renderSkin(p ? p.id : null)
   $('btnSavePlay').textContent = p && running.has(p.id) ? 'Zapisz i uruchom ponownie' : 'Zapisz i graj'
   setMode(d.mode || 'lan')
   $('formMsg').textContent = ''
@@ -457,6 +490,40 @@ function openModal(p) {
   form.elements.name.focus()
 }
 const closeModal = () => $('modal').classList.add('hidden')
+
+// ---------- skin bota ----------
+const MODEL_PL = { slim: 'szczupły (ręce 3 px, jak Alex)', wide: 'klasyczny (ręce 4 px, jak Steve)' }
+async function renderSkin(id) {
+  const head = $('skinHead')
+  head.getContext('2d').clearRect(0, 0, head.width, head.height)
+  $('btnSkin').disabled = !id
+  $('btnSkinDel').classList.add('hidden')
+  if (!id) { $('skinInfo').textContent = 'Zapisz bota, żeby dodać mu skin.'; return }
+  const info = await B.skinInfo(id)
+  if (!info.ok) return
+  const lines = [`W grze ten nick ma model ${MODEL_PL[info.slot.model]} – domyślnie wygląda jak ${info.slot.skin[0].toUpperCase() + info.slot.skin.slice(1)}.`]
+  if (info.skin) {
+    const { slim } = await drawSkinHead(head, info.skin)
+    $('btnSkinDel').classList.remove('hidden')
+    lines.push(`Skin jest w paczce zasobów „${info.packName}”. W grze włącz ją raz: Opcje → Paczki zasobów; po zmianie skina wciśnij F3+T.`)
+    if (slim !== (info.slot.model === 'slim')) lines.push(`⚠ Ten skin ma ${slim ? 'szczupłe' : 'szerokie'} ręce, a bot ${slim ? 'szerokie' : 'szczupłe'} – ręce mogą wyglądać trochę dziwnie.`)
+    if (info.clash.length) lines.push(`⚠ ${info.clash.join(', ')} ma ten sam domyślny skin – w grze oba boty będą wyglądać tak samo.`)
+  } else {
+    lines.push('Zaimportuj plik PNG skina (64×64), np. pobrany ze strony ze skinami.')
+  }
+  $('skinInfo').innerHTML = lines.map(esc).join('<br>')
+}
+$('btnSkin').addEventListener('click', async () => {
+  const id = form.elements.id.value
+  const r = await B.skinImport(id)
+  if (r.canceled) return
+  if (!r.ok) { toast(r.error, 'err'); return }
+  toast('Skin zaimportowany – w grze włącz paczkę zasobów „MinecraftBot-skiny”', 'ok')
+  renderSkin(id)
+  renderBots()
+})
+$('btnSkinDel').addEventListener('click', async () => { const id = form.elements.id.value; await B.skinRemove(id); renderSkin(id); renderBots() })
+$('btnSkinPacks').addEventListener('click', () => B.skinOpenPacks())
 $('btnCancel').addEventListener('click', closeModal)
 $('modal').addEventListener('mousedown', e => { if (e.target.id === 'modal') closeModal() })
 

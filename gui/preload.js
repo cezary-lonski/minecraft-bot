@@ -24,6 +24,12 @@ contextBridge.exposeInMainWorld('bridge', {
   commands: () => ipcRenderer.invoke('commands:list'),
   saveCommand: c => ipcRenderer.invoke('commands:save', c),
   deleteCommand: key => ipcRenderer.invoke('commands:delete', key),
+  // skiny botow
+  skinInfo: id => ipcRenderer.invoke('skin:info', id),
+  skinSlot: name => ipcRenderer.invoke('skin:slot', name),
+  skinImport: id => ipcRenderer.invoke('skin:import', id),
+  skinRemove: id => ipcRenderer.invoke('skin:remove', id),
+  skinOpenPacks: () => ipcRenderer.invoke('skin:openPacks'),
   // asystent AI
   aiHasKey: () => ipcRenderer.invoke('ai:hasKey'),
   aiSetKey: (key, provider) => ipcRenderer.invoke('ai:setKey', key, provider),

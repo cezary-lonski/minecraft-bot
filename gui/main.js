@@ -2,7 +2,7 @@
 // Kazdy bot to profil (nick, swiat, ustawienia) z wlasnym folderem danych - pamieta punkty, budowle, ostatnie zadanie.
 // Uruchomiony bot dziala jako osobny proces Node (bot.js); okno wysyla mu komendy na wejscie i czyta jego wyjscie.
 // Kilka botow moze dzialac naraz - ich wiadomosci zespolowe (@@TEAM) sa przekazywane miedzy nimi.
-const { app, BrowserWindow, ipcMain, shell, safeStorage } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, safeStorage, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { spawn, spawnSync } = require('child_process')
@@ -188,6 +188,76 @@ function sendCommand(id, text) {
   return { ok: true }
 }
 
+// ---------- skiny botow ----------
+// Bot bez konta Microsoft dostaje w grze jeden z 18 domyslnych skinow (9 postaci x model szczuply/klasyczny),
+// wybrany z UUID liczonego z nicku: DEFAULT_SKINS[floorMod(uuid.hashCode(), 18)] (sprawdzone w kodzie gry 26.3).
+// Zaimportowany skin podmieniamy w paczce zasobow - w grze bot nosi go zamiast domyslnego.
+const SKIN_NAMES = ['alex', 'ari', 'efe', 'kai', 'makena', 'noor', 'steve', 'sunny', 'zuri']
+const PACK_NAME = 'MinecraftBot-skiny'
+const PACK_DIR = process.env.MB_PACK_DIR || path.join(process.env.APPDATA || app.getPath('appData'), '.minecraft', 'resourcepacks', PACK_NAME)
+function offlineUuid(name) {
+  const b = require('crypto').createHash('md5').update('OfflinePlayer:' + name, 'utf8').digest()
+  b[6] = (b[6] & 0x0f) | 0x30
+  b[8] = (b[8] & 0x3f) | 0x80
+  return b
+}
+function defaultSkinSlot(name) {
+  const b = offlineUuid(name)
+  const hilo = b.readBigInt64BE(0) ^ b.readBigInt64BE(8)
+  const h = Number(BigInt.asIntN(32, hilo >> 32n)) ^ Number(BigInt.asIntN(32, hilo))
+  const i = ((h % 18) + 18) % 18
+  return { model: i < 9 ? 'slim' : 'wide', skin: SKIN_NAMES[i % 9] }
+}
+const skinFile = id => path.join(botDir(id), 'skin.png')
+// PNG 64x64 (albo stary 64x32): szerokosc i wysokosc z naglowka IHDR
+function pngSize(buf) {
+  if (buf.length < 24 || buf.readUInt32BE(0) !== 0x89504e47) return null
+  return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) }
+}
+// paczka zasobow ze skinami wszystkich botow (budowana od nowa przy kazdej zmianie)
+function rebuildSkinPack() {
+  const withSkin = loadProfiles().filter(p => fs.existsSync(skinFile(p.id)))
+  try { fs.rmSync(path.join(PACK_DIR, 'assets'), { recursive: true, force: true }) } catch {}
+  if (!withSkin.length) return { ok: true, count: 0 }
+  fs.mkdirSync(PACK_DIR, { recursive: true })
+  fs.writeFileSync(path.join(PACK_DIR, 'pack.mcmeta'), JSON.stringify({
+    pack: { pack_format: 75, supported_formats: [15, 999], min_format: 15, max_format: 999, description: 'Skiny botów z programu Minecraft Bot' }
+  }, null, 2))
+  try { fs.copyFileSync(path.join(__dirname, 'icon.png'), path.join(PACK_DIR, 'pack.png')) } catch {}
+  for (const p of withSkin) {
+    const s = defaultSkinSlot(p.name)
+    const dir = path.join(PACK_DIR, 'assets', 'minecraft', 'textures', 'entity', 'player', s.model)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.copyFileSync(skinFile(p.id), path.join(dir, s.skin + '.png'))
+  }
+  return { ok: true, count: withSkin.length }
+}
+function skinInfo(id) {
+  const p = loadProfiles().find(x => x.id === id)
+  if (!p) return { ok: false }
+  const slot = defaultSkinSlot(p.name)
+  // inne boty z tym samym domyslnym skinem wygladalyby tak samo
+  const clash = loadProfiles().filter(x => x.id !== id && fs.existsSync(skinFile(x.id)) && JSON.stringify(defaultSkinSlot(x.name)) === JSON.stringify(slot)).map(x => x.name)
+  const f = skinFile(id)
+  return { ok: true, slot, clash, packDir: PACK_DIR, packName: PACK_NAME, skin: fs.existsSync(f) ? 'data:image/png;base64,' + fs.readFileSync(f).toString('base64') : null }
+}
+ipcMain.handle('skin:info', (e, id) => skinInfo(id))
+ipcMain.handle('skin:slot', (e, name) => defaultSkinSlot(String(name || '')))
+ipcMain.handle('skin:import', async (e, id) => {
+  if (!loadProfiles().some(x => x.id === id)) return { ok: false, error: 'Najpierw zapisz bota.' }
+  const r = await dialog.showOpenDialog(win, { title: 'Wybierz skin (plik PNG 64×64)', filters: [{ name: 'Skin Minecraft (PNG)', extensions: ['png'] }], properties: ['openFile'] })
+  if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true }
+  const buf = fs.readFileSync(r.filePaths[0])
+  const size = pngSize(buf)
+  if (!size || size.w !== 64 || (size.h !== 64 && size.h !== 32)) return { ok: false, error: 'To nie jest skin Minecrafta – potrzebny plik PNG 64×64 (albo 64×32).' }
+  fs.mkdirSync(botDir(id), { recursive: true })
+  fs.writeFileSync(skinFile(id), buf)
+  rebuildSkinPack()
+  return { ok: true, ...skinInfo(id) }
+})
+ipcMain.handle('skin:remove', (e, id) => { try { fs.unlinkSync(skinFile(id)) } catch {} rebuildSkinPack(); return { ok: true } })
+ipcMain.handle('skin:openPacks', () => { const d = path.dirname(PACK_DIR); fs.mkdirSync(d, { recursive: true }); shell.openPath(d); return d })
+
 // komenda od AI: bot odsyla (@@AICMDRES), czy ja zrozumial - AI dostaje to jako wynik narzedzia i moze sie poprawic
 const aiCmdWaiters = new Map()
 let aiCmdSeq = 0
@@ -211,13 +281,16 @@ function sendAiCommand(id, text) {
 // ---------- profile ----------
 function newId() { return 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) }
 
-ipcMain.handle('profiles:list', () => loadProfiles().map(p => ({ ...p, running: procs.has(p.id) })))
+// skin (jako obrazek) do glowy na karcie bota
+const skinData = id => { try { return 'data:image/png;base64,' + fs.readFileSync(skinFile(id)).toString('base64') } catch { return null } }
+ipcMain.handle('profiles:list', () => loadProfiles().map(p => ({ ...p, running: procs.has(p.id), skin: skinData(p.id) })))
 ipcMain.handle('profiles:save', (e, p) => {
   const list = loadProfiles()
   if (!p.name || !/^\w{3,16}$/.test(p.name)) return { ok: false, error: 'Nick bota: 3-16 znakow (litery, cyfry, _).' }
   if (list.some(x => x.name.toLowerCase() === p.name.toLowerCase() && x.id !== p.id)) return { ok: false, error: 'Bot o takim nicku juz istnieje.' }
   if (p.id) {
     saveProfiles(list.map(x => x.id === p.id ? { ...x, ...p } : x))
+    rebuildSkinPack() // nowy nick = inny domyslny skin w grze
     return { ok: true, id: p.id }
   }
   const id = newId()
@@ -234,6 +307,7 @@ ipcMain.handle('profiles:delete', async (e, id) => {
   }
   saveProfiles(loadProfiles().filter(x => x.id !== id))
   try { fs.rmSync(botDir(id), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }) } catch {}
+  try { rebuildSkinPack() } catch {}
   return { ok: true }
 })
 // dane bota z poprzednich gier (punkty, budowle, ostatnie zadanie) - do pokazania na karcie
