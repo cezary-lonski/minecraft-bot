@@ -294,6 +294,7 @@ miska, butelka, łódka, wózek, tory, książka, papier, cukier, dźwignia, prz
 |---|---|
 | `pomóż` | dołącza do pracy innego bota: budowy, burzenia albo walki |
 | `pomóż <bot>` | pomaga konkretnemu botowi |
+| `pomoc <kto> <komu>` | na czacie gry, gdy działa kilka botów: np. `pomoc Kopacz Claude` — Kopacz dołącza do pracy Claude (budowa, burzenie, walka), pozostałe boty to ignorują |
 | `poproś <bot> o <co> [ile]` | prosi innego bota o przedmioty — przyniesie je i wyrzuci |
 
 ### Baza i punkty

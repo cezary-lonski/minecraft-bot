@@ -67,6 +67,7 @@ window.COMMANDS = [
   // Zespol
   { cat: 'Zespół', cmd: 'pomoz', desc: 'Dołącza do pracy innego bota (budowa, burzenie, walka)' },
   { cat: 'Zespół', cmd: 'pomoz <bot>', desc: 'Pomaga konkretnemu botowi' },
+  { cat: 'Zespół', cmd: 'pomoc <kto> <komu>', desc: 'Na czacie gry: np. pomoc Kopacz Claude – Kopacz dołącza do pracy Claude, inne boty to ignorują' },
   { cat: 'Zespół', cmd: 'popros <bot> o <co> <ile>', desc: 'Prosi innego bota o przedmioty – przyniesie je' },
   // AI w grze (wlaczane w ustawieniach bota)
   { cat: 'AI w grze', cmd: 'ai <pytanie>', desc: 'Pytanie do AI na czacie gry, np. ai jak pokonać smoka?' },

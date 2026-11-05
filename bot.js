@@ -1261,7 +1261,7 @@ const HELP = [
   'Budowa (z wystrojem): zburz <budowla>, rozbierz rusztowania, buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
-  'Zespol: pomoz [bot], popros <bot> o <co> [ile], zabij <gracz|mob|imie>',
+  'Zespol: pomoz [bot], pomoc <kto> <komu> (np. pomoc Kopacz Claude), popros <bot> o <co> [ile], zabij <gracz|mob|imie>',
   'Po bledzie (np. zabraklo blokow): daj mu brakujace rzeczy i napisz kontynuuj',
   'Wlasne: projekty, buduj <projekt>, moje komendy, naucz sie <nazwa>: krok; krok, zapomnij komende <nazwa>',
   'Inne: status, co robisz, diag, chat <tekst>, permisja <nick>, odbierz <nick>, permisje'
@@ -3916,6 +3916,7 @@ function helpCommand(arg) {
   if (!TEAM) { say('Pomaganie dziala, gdy boty sa uruchomione z centrum sterowania.'); return }
   if (!mates.length) { say('Nie widze innych botow.'); return }
   const name = arg && mates.find(t => t.from.toLowerCase().startsWith(arg.toLowerCase()))?.from
+  if (arg && !name) { say(`Nie widze bota ${arg}. Dzialaja: ${mates.map(t => t.from).join(', ')}.`); return }
   const target = name ? mates.find(t => t.from === name) : (mates.find(t => t.job) || mates.find(t => t.busy) || mates[0])
   return joinJob(target.from, target.job, false)
 }
@@ -4464,7 +4465,15 @@ function handleCommand(user, msg, whisper = false) {
   if (/^(idz|ide|chodz|ruszaj)$/.test(verb)) return walkCommand(args.join(' '))
   if (c === 'dom' || c === 'wroc do domu' || c === 'do domu') return goToCommand(['dom'])
   if (verb === 'zabij') return args[0] ? killCommand(rest) : say('Kogo? np. "zabij Nick", "zabij zombie", "zabij Burek".')
-  if (/^(pomoz|pomoc)$/.test(verb) && !/^pomoc$/.test(c)) return helpCommand(args.filter(a => !/^(w|przy|mu|jej|budowie|budowaniu|walce|burzeniu|wystroju)$/.test(a))[0])
+  if (/^(pomoz|pomoc)$/.test(verb) && !/^pomoc$/.test(c)) {
+    const names = args.filter(a => !/^(w|przy|mu|jej|budowie|budowaniu|walce|burzeniu|wystroju)$/.test(a))
+    const me = bot.username.toLowerCase()
+    const isMe = n => n === me || (n.length >= 3 && me.startsWith(n))
+    // "pomoc <kto> <komu>" - na czacie slysza to wszystkie boty, a reaguje tylko ten pierwszy
+    if (names.length >= 2) return isMe(names[0]) ? helpCommand(names[1]) : undefined
+    if (names[0] && isMe(names[0])) return // "pomoc <moj nick>" - nikt nie pomaga sam sobie
+    return helpCommand(names[0])
+  }
   if (c === 'pomoz') return helpCommand(null)
   if (verb === 'popros') return requestCommand(rest)
 
