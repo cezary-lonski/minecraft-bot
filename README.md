@@ -34,6 +34,7 @@ Wchodzi do gry jako osobny gracz i wykonuje polecenia wydawane **po polsku na cz
 
 ## Spis treści
 - [Najprościej: program dla Windows](#najprościej-program-dla-windows)
+- [Skin bota](#skin-bota)
 - [Kilka botów naraz](#kilka-botów-naraz)
 - [Kreator budowli](#kreator-budowli)
 - [Asystent AI](#asystent-ai)
@@ -67,6 +68,15 @@ Kolejnym razem: **Graj → dwuklik na bota**. Program sam sprawdza aktualizacje 
 (można to wyłączyć w zakładce **Aktualizacje**). Ustawienia, klucze i pamięć botów są obok programu, w **`D:\Minecraft Bot\Dane`**
 (przy programie na dysku C – w `%APPDATA%\Minecraft Bot`). Starsza wersja zainstalowana na dysku C przy aktualizacji sama
 przenosi się na D razem z danymi.
+
+## Skin bota
+W ustawieniach bota (📝 Edytuj) kliknij **📁 Importuj skin (PNG)** i wybierz plik skina 64×64 (np. pobrany ze strony ze skinami).
+Bot łączy się bez konta Microsoft, więc serwer daje mu jeden z 18 domyślnych skinów (Steve, Alex, Ari… w wersji szczupłej
+albo klasycznej), wybrany na podstawie nicku. Program sam wylicza, który to skin, i podmienia go w paczce zasobów
+**MinecraftBot-skiny** (w `.minecraft\resourcepacks`). W grze włącz ją raz: **Opcje → Paczki zasobów**; po zmianie skina
+wystarczy **F3+T**. Skin widzisz w swojej grze; inni gracze zobaczą go, jeśli też włączą tę paczkę.
+- Kształt rąk (szczupłe / klasyczne) zależy od nicku — program ostrzeże, jeśli skin ma inne ręce niż bot.
+- Gracze bez konta z tym samym domyślnym skinem (np. drugi bot) też go dostaną — program o tym ostrzega.
 
 ## Kilka botów naraz
 W zakładce **Graj** każdy bot ma własną kartę i własną pamięć świata: bazę, punkty, postawione budowle i przerwane zadanie
