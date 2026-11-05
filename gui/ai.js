@@ -170,10 +170,24 @@ async function geminiModels(key) {
   return list
 }
 // model z wyczerpanym limitem (429) odpoczywa 15 min, przeciazony (503) - 5 min, nieistniejacy (404) - dobe
-const geminiCooldown = new Map()
+let geminiCooldown = new Map()
 const coolingDown = m => (geminiCooldown.get(m) || 0) > Date.now()
 // model, ktory ostatnio odpowiedzial - od niego zaczynamy (najnowsze bywaja przeciazone i dlugo zwracaja blad)
-let lastGoodModel = null
+// ostatni dzialajacy model osobno dla gry (szybkie modele Lite) i dla okna programu
+let lastGood = { game: null, app: null }
+let cacheFile = null
+function loadModelCache(file) {
+  cacheFile = file
+  try {
+    const c = JSON.parse(require('fs').readFileSync(file, 'utf8'))
+    geminiCooldown = new Map(Object.entries(c.cooldown || {}).filter(([, t]) => t > Date.now()))
+    lastGood = { game: null, app: null, ...(c.lastGood || {}) }
+  } catch {}
+}
+function saveModelCache() {
+  if (!cacheFile) return
+  try { require('fs').writeFileSync(cacheFile, JSON.stringify({ cooldown: Object.fromEntries(geminiCooldown), lastGood })) } catch {}
+}
 // modele, ktore nie przyjmuja ustawienia myslenia - wysylamy bez niego
 const noThinkingConfig = new Set()
 
@@ -191,12 +205,22 @@ async function geminiCall(key, model, body, timeoutMs = 45000) {
     throw e
   }
   const j = await r.json().catch(() => ({}))
-  if (!r.ok) { const e = new Error(j.error?.message || `HTTP ${r.status}`); e.status = r.status; throw e }
+  if (!r.ok) {
+    const e = new Error(j.error?.message || `HTTP ${r.status}`)
+    e.status = r.status
+    // Google podaje, za ile odnowi sie limit (np. "52442s") i czy to limit dzienny
+    for (const d of j.error?.details || []) {
+      if (d.retryDelay) e.retryMs = parseFloat(d.retryDelay) * 1000
+      if ((d.violations || []).some(v => /PerDay/i.test(v.quotaId || ''))) e.perDay = true
+    }
+    throw e
+  }
   return j
 }
 
 // host: { getProvider, getKey(provider), saveDesign, saveCommand, sendCommand, state, emit }
 function createAssistant(host) {
+  if (host.modelCacheFile) loadModelCache(host.modelCacheFile)
   // osobna rozmowa dla okna programu i dla kazdego bota w grze
   const convs = new Map()
   const conv = (id, provider) => {
@@ -279,13 +303,16 @@ function createAssistant(host) {
   async function chatGemini(key, c, system, ctx, mark) {
     const models = await geminiModels(key)
     let lastErr = null
-    const order = lastGoodModel && models.includes(lastGoodModel) ? [lastGoodModel, ...models.filter(m => m !== lastGoodModel)] : models
+    const mode = ctx.inGame ? 'game' : 'app'
+    const base = ctx.inGame ? [...models.filter(m => /lite/.test(m)), ...models.filter(m => !/lite/.test(m))] : models
+    const good = lastGood[mode]
+    const order = good && base.includes(good) ? [good, ...base.filter(m => m !== good)] : base
     for (let i = 0; i < order.length; i++) {
       const model = order[i]
       if (coolingDown(model)) continue
       try {
         const res = await geminiTurn(key, model, c, system, ctx)
-        lastGoodModel = model
+        if (lastGood[mode] !== model) { lastGood[mode] = model; saveModelCache() }
         return res
       } catch (e) {
         lastErr = e
@@ -293,8 +320,11 @@ function createAssistant(host) {
         // model nie przyjmuje ustawienia myslenia - ten sam model jeszcze raz, bez niego
         if (e.status === 400 && /thinking/i.test(e.message) && !noThinkingConfig.has(model)) { noThinkingConfig.add(model); i--; continue }
         if (![429, 500, 503, 504, 404].includes(e.status)) throw e
-        if (model === lastGoodModel) lastGoodModel = null
-        geminiCooldown.set(model, Date.now() + (e.status === 404 ? 24 * 3600000 : e.status === 429 ? 15 * 60000 : 5 * 60000))
+        if (model === lastGood[mode]) lastGood[mode] = null
+        // limit: tyle, ile poda Google (dzienny - zwykle do rana), inaczej domyslnie
+        const wait = e.status === 429 && e.retryMs ? Math.min(e.retryMs + 60000, 26 * 3600000) : e.status === 404 ? 24 * 3600000 : e.status === 429 ? (e.perDay ? 12 * 3600000 : 15 * 60000) : 5 * 60000
+        geminiCooldown.set(model, Date.now() + wait)
+        saveModelCache()
         console.log(`[ai] ${model}: ${e.status} - probuje nastepny model`)
       }
     }

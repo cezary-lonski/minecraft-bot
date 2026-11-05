@@ -429,6 +429,7 @@ function keys() {
 }
 const getKey = (provider = getProvider()) => keys()[provider]
 const assistant = createAssistant({
+  modelCacheFile: path.join(DATA, 'ai-modele.json'), // ktore modele Gemini dzialaja / maja wyczerpany limit
   getProvider,
   getKey,
   saveDesign,
