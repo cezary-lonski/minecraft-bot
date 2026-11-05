@@ -4701,7 +4701,26 @@ if (process.env.MC_GUI === '1') {
 }
 
 bot.on('death', () => { say('Zginalem, respawn...'); })
-bot.on('kicked', r => console.log('Wyrzucony:', r))
+// powod wyrzucenia jako zwykly tekst (serwer przysyla JSON albo NBT z czatu - wczesniej w logu bylo samo "{")
+function chatToText(r) {
+  let v = r
+  if (typeof v === 'string') { try { v = JSON.parse(v) } catch { return v } }
+  try { if (v && v.type && v.value !== undefined) v = require('prismarine-nbt').simplify(v) } catch {}
+  const walk = x => {
+    if (x == null) return ''
+    if (typeof x !== 'object') return String(x)
+    if (Array.isArray(x)) return x.map(walk).join('')
+    return (x.text ?? x[''] ?? '') + (x.translate ? x.translate + (x.with ? ' (' + walk(x.with) + ')' : '') : '') + (x.extra ? walk(x.extra) : '')
+  }
+  return walk(v) || JSON.stringify(v)
+}
+bot.on('kicked', r => {
+  const text = chatToText(r).replace(/\s+/g, ' ').trim()
+  console.log('Wyrzucony: ' + text)
+  if (/mod|fabric|forge|fml|neoforge|registry|channel|payload|incompatible|niezgodn/i.test(text)) {
+    console.log('[bot] Ten swiat wymaga modow po stronie gracza. Bot to zwykly Minecraft bez modow - nie wejdzie. Mody tylko serwerowe (np. WorldEdit) nie przeszkadzaja; przeszkadzaja mody dodajace nowe bloki, przedmioty i moby.')
+  }
+})
 bot.on('error', e => {
   console.log('Blad:', e.message || e.code)
   if (e.code === 'ECONNREFUSED') console.log('[bot] Nikt nie nasluchuje pod tym adresem - sprawdz port LAN albo czy serwer dziala.')
