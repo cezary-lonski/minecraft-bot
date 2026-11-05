@@ -2212,6 +2212,10 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
   const batched = solidCells.length > BATCH_LIMIT
   for (const c of solidCells) protectedItems.add(WOOD_RE.test(c.block) ? 'log' : c.block)
   for (const c of solidCells) noDigPositions.add(posKey(c.pos)) // odblokowywanie nie rusza budowli
+  // wystroj: nietykalna jest cala budowla (sciany, stropy, dach) - zaklinowany przy stawianiu dywanu bot nie kopie sufitu
+  if (opts.decor && opts.type) {
+    for (const c of planOf(opts.type) || []) if (c.block !== 'air') noDigPositions.add(posKey(toWorld(origin, front, c.x, c.y, c.z)))
+  }
   const normalMoves = bot.pathfinder.movements
   if (isCreative()) await creativeGive('dirt', 64) // rusztowanie dla pathfindera
   try {
@@ -2757,9 +2761,17 @@ function decorateRoom(p, room) {
   }
   // 6) biblioteka: stol do zaklinania na srodku tylnej czesci
   if (library) put(cx, y, z2 - 2, 'enchanting_table', { optional: true })
-  // 7) dywan na srodku podlogi (ozdoba)
-  for (let x = x1 + 2; x <= x2 - 2; x++) {
-    for (let z = z1 + 2; z <= z2 - 2; z++) put(x, y, z, end ? 'purple_carpet' : 'red_carpet', { optional: true })
+  // 7) dywan na srodku podlogi (ozdoba); w Endzie fioletowy z biala obwodka i rozowym wzorem w romby
+  const [cx1, cx2, cz1, cz2] = [x1 + 2, x2 - 2, z1 + 2, z2 - 2]
+  const ccx = Math.round((cx1 + cx2) / 2)
+  const ccz = Math.round((cz1 + cz2) / 2)
+  for (let x = cx1; x <= cx2; x++) {
+    for (let z = cz1; z <= cz2; z++) {
+      let carpet = end ? 'purple_carpet' : 'red_carpet'
+      if (end && (x === cx1 || x === cx2 || z === cz1 || z === cz2)) carpet = 'white_carpet'
+      else if (end && (Math.abs(x - ccx) + Math.abs(z - ccz)) % 3 === 0) carpet = 'pink_carpet'
+      put(x, y, z, carpet, { optional: true })
+    }
   }
   // 8) obrazy na bocznych scianach (na wysokosci oczu)
   if (h >= 3) {
