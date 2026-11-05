@@ -4717,7 +4717,9 @@ function chatToText(r) {
 bot.on('kicked', r => {
   const text = chatToText(r).replace(/\s+/g, ' ').trim()
   console.log('Wyrzucony: ' + text)
-  if (/mod|fabric|forge|fml|neoforge|registry|channel|payload|incompatible|niezgodn/i.test(text)) {
+  if (/disconnect\.(incompatible|outdated)|outdated|incompatible client|version|wersj/i.test(text)) {
+    console.log(`[bot] Inna wersja gry: bot (Mineflayer) obsluguje Minecrafta do ${require('minecraft-data').supportedVersions.pc.slice(-1)[0]}, a swiat dziala na innej (np. 26.x). Otworz swiat na LAN w wersji obslugiwanej przez bota albo wpisz wersje w ustawieniach bota.`)
+  } else if (/mod|fabric|forge|fml|neoforge|registry|channel|payload/i.test(text)) {
     console.log('[bot] Ten swiat wymaga modow po stronie gracza. Bot to zwykly Minecraft bez modow - nie wejdzie. Mody tylko serwerowe (np. WorldEdit) nie przeszkadzaja; przeszkadzaja mody dodajace nowe bloki, przedmioty i moby.')
   }
 })
