@@ -379,6 +379,7 @@ należąca do budowli i naturalne pagórki przykryte trawą.
 | Komenda | Działanie |
 |---|---|
 | `zburz <budowla>` (`usuń budowlę <budowla>`) | po potwierdzeniu rozbiera budowlę i jej wystrój od góry; terenu dookoła nie rusza |
+| `usuń obszar <róg> <róg>` | wykopuje wszystko w prostopadłościanie między dwoma rogami. Róg: współrzędne `x y z`, nick gracza (jego pozycja), `tu` (Ty) albo `bot` — np. `usuń obszar 10 64 10 30 80 30`, `usuń obszar Czarkonator 30 80 30`. Pyta o potwierdzenie, nie kopie poza obszarem, na końcu zbiera swoje rusztowania; `czas` pokazuje postęp (do 250 000 pól) |
 | `rozbierz rusztowania` | usuwa lewitującą ziemię przy najbliższej zapamiętanej budowli (albo 20 bloków wokół bota) |
 
 Budowle: `dom`, `dom villagera`, `zamek`, `zamczysko`, `pałac`, `pałac endu`, `baza podziemna`.

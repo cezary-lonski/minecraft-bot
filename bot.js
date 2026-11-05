@@ -1263,7 +1263,7 @@ function run() {
 const HELP = [
   'Zadania: start, etap <drewno|kamien|jedzenie|zelazo|diamenty>, zdobadz <surowiec|przedmiot|jedzenie> [ile], poluj [zwierze] [ile], przepal, scraftuj <co>, stop',
   'Ruch: tu, idz <ile> <przod|tyl|lewo|prawo>, idz do <x z | punkt | gracz>, chodz za mna, ochraniaj [gracz], zabij <gracz>, spij',
-  'Budowa (z wystrojem): zburz <budowla>, rozbierz rusztowania, buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
+  'Budowa (z wystrojem): zburz <budowla>, usun obszar <x y z|nick> <x y z|nick>, rozbierz rusztowania, buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
   'Zespol: pomoz [bot], pomoc <kto> <komu> (np. pomoc Kopacz Claude), popros <bot> o <co> [ile], zabij <gracz|mob|imie>',
@@ -3170,6 +3170,94 @@ async function demolishCells(type, loc, part) {
   return removed
 }
 
+// ---------- "usun obszar <rog> <rog>": wykopuje wszystko w prostopadloscianie miedzy dwoma rogami ----------
+// Rog: x y z, nick gracza (jego pozycja), "tu"/"mnie" (gracz, ktory pisze), "bot" (pozycja bota).
+function parseAreaPoint(tok, i, user) {
+  const num = k => tok[k] !== undefined && /^-?\d+$/.test(tok[k])
+  if (num(i) && num(i + 1) && num(i + 2)) return { pos: new Vec3(+tok[i], +tok[i + 1], +tok[i + 2]), next: i + 3 }
+  const t = tok[i]
+  if (!t) return { error: 'brakuje rogu' }
+  const playerAt = name => Object.values(bot.players).find(p => p.username.toLowerCase() === String(name).toLowerCase())
+  if (/^(tu|tutaj|mnie|ja)$/.test(t)) {
+    const p = playerAt(user || process.env.MC_PLAYER || '')
+    return p?.entity ? { pos: p.entity.position.floored(), next: i + 1 } : { error: 'nie widze Cie - podaj wspolrzedne x y z' }
+  }
+  if (/^(bot|siebie|ty)$/.test(t)) return { pos: bot.entity.position.floored(), next: i + 1 }
+  const p = playerAt(t)
+  if (!p) return { error: `nie rozumiem "${t}" (podaj x y z albo nick gracza)` }
+  if (!p.entity) return { error: `nie widze gracza ${p.username} - musi byc blisko bota` }
+  return { pos: p.entity.position.floored(), next: i + 1 }
+}
+
+function areaClearCommand(user, text) {
+  const usage = 'Uzycie: usun obszar <x y z | nick | tu> <x y z | nick | tu>, np. usun obszar 10 64 10 30 80 30'
+  const tok = stripPl(text).toLowerCase().trim().split(/\s+/).filter(Boolean)
+  const a = parseAreaPoint(tok, 0, user)
+  if (a.error) { say(`${usage} (${a.error}).`); return }
+  const b = parseAreaPoint(tok, a.next, user)
+  if (b.error) { say(`${usage} (${b.error}).`); return }
+  const min = new Vec3(Math.min(a.pos.x, b.pos.x), Math.min(a.pos.y, b.pos.y), Math.min(a.pos.z, b.pos.z))
+  const max = new Vec3(Math.max(a.pos.x, b.pos.x), Math.max(a.pos.y, b.pos.y), Math.max(a.pos.z, b.pos.z))
+  const dims = `${max.x - min.x + 1}x${max.y - min.y + 1}x${max.z - min.z + 1}`
+  const volume = (max.x - min.x + 1) * (max.y - min.y + 1) * (max.z - min.z + 1)
+  if (volume > 250000) { say(`Za duzy obszar (${dims} = ${volume} pol) - najwyzej 250 000, np. 50x100x50.`); return }
+  const inArea = p => p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y && p.z >= min.z && p.z <= max.z
+  return task(`usuwanie obszaru ${dims}`, async () => {
+    // co jest do wykopania: od gory (piasek i zwir nie spadaja), wszystko poza powietrzem, ciecza i blokami nie do zniszczenia
+    const list = []
+    for (let y = max.y; y >= min.y; y--) {
+      for (let x = min.x; x <= max.x; x++) {
+        for (let z = min.z; z <= max.z; z++) {
+          const blk = bot.blockAt(new Vec3(x, y, z))
+          if (!blk || /^(air|cave_air|void_air)$|water|lava|bubble_column/.test(blk.name) || !blk.diggable) continue
+          list.push(blk.position)
+        }
+      }
+    }
+    if (!list.length) { say(`W obszarze ${dims} nie ma nic do usuniecia (albo jest za daleko i bot go nie widzi).`); return }
+    const answer = await askUser(`Usunac obszar ${dims} od ${min.x} ${min.y} ${min.z} do ${max.x} ${max.y} ${max.z}? To ${list.length} blokow. (tak / nie)`,
+      [[/^(tak|usun|dawaj|ok|na pewno)$/, 'yes'], [/^(nie|stop|zostaw)$/, 'no']], 60000, 'no', 'Brak odpowiedzi - nic nie usuwam.')
+    if (answer !== 'yes' || !running) { if (running) say('Dobra, nic nie usuwam.'); return }
+    // pathfinder kopie tylko w obszarze (budowle i teren dookola zostaja); rusztowania z ziemi
+    const moves = protectBuilds(new Movements(bot))
+    moves.canDig = true
+    moves.allow1by1towers = !isCreative()
+    const dirtId = mcData.itemsByName.dirt?.id
+    if (dirtId !== undefined) moves.scafoldingBlocks = isCreative() ? [] : [dirtId]
+    moves.exclusionAreasBreak.push(blk => inArea(blk.position) ? 0 : 1000)
+    const normal = bot.pathfinder.movements
+    bot.pathfinder.setMovements(moves)
+    let removed = 0
+    currentBuild = { label: `usuwanie obszaru ${dims}`, total: list.length, phase: 'budowa', startedAt: Date.now(), basePlaced: 0, get placed() { return removed } }
+    say(`Usuwam ${list.length} blokow (${dims}). "czas" powie, ile zostalo.`)
+    try {
+      for (const p of list) {
+        if (!running) break
+        const blk = bot.blockAt(p)
+        if (!blk || /^(air|cave_air|void_air)$|water|lava/.test(blk.name)) { removed++; continue } // juz zniknal
+        setStatus(`usuwam obszar ${dims}: ${removed}/${list.length}`)
+        try {
+          await goNearCell(p)
+          const now = bot.blockAt(p)
+          if (now && now.diggable && !/^(air|cave_air|void_air)$/.test(now.name)) {
+            try { await bot.tool.equipForBlock(now, {}) } catch {}
+            await bot.dig(now, true)
+          }
+          removed++
+        } catch (e) { console.log('[bot] obszar:', e.message) }
+      }
+      if (!running) return
+      // slupki z ziemi, ktore bot postawil, zeby dosiegnac wysoko - tez znikaja
+      const dirtLeft = floatingDirt(min.x, max.x, min.z, max.z, min.y, max.y + 3)
+      if (dirtLeft.length) await removeBlocksCarefully(dirtLeft)
+      say(`Obszar ${dims} wyczyszczony: usunalem ${removed} z ${list.length} blokow.`)
+    } finally {
+      bot.pathfinder.setMovements(normal)
+      currentBuild = null
+    }
+  })
+}
+
 function demolishCommand(text) {
   const t = stripPl(text).trim().replace(/^budowl\w*\s*/, '')
   const here = /\btutaj|\btu$/.test(t)
@@ -4604,6 +4692,7 @@ function handleCommand(user, msg, whisper = false) {
   if (/^(buduj|zbuduj|postaw budynek)$/.test(verb)) return buildCommand(args.join(' '))
   if (/^(wystroj|udekoruj|urzadz|umebluj)$/.test(verb)) { say('Wystroj robie teraz od razu przy budowie: meble, lampy, dywany i obrazy sa w planie. Napisz "buduj <budowla>".'); return }
   if (/^(zburz|zniszcz)$/.test(verb) || /^usun budowl/.test(c)) return demolishCommand(args.join(' '))
+  if (/^(usun|wyczysc|wykop|skasuj|zniszcz) obszar\b/.test(c)) return areaClearCommand(user, c.replace(/^\S+\s+obszar\s*/, ''))
   if (verb === 'usun' && args[0] && !findWaypoint(args.join(' ')) && matchBuildType(args.join(' '))) return demolishCommand(args.join(' '))
   if (/^(rozbierz|usun|posprzataj|sprzatnij) rusztowani/.test(c) || c === 'posprzataj') return cleanupCommand()
   if (c === 'przeszukaj' || c === 'przeszukaj skrzynie') return lootCommand()

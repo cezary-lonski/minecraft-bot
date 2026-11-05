@@ -61,6 +61,7 @@ window.COMMANDS = [
   { cat: 'Budowanie', cmd: 'buduj <budowla>', desc: 'dom, zamek, zamczysko, pałac, pałac endu…' },
   { cat: 'Budowanie', cmd: 'buduj napis: <tekst>', desc: 'Napis z bloków' },
   { cat: 'Budowanie', cmd: 'zburz <budowla>', desc: 'Rozbiera budowlę (pyta o potwierdzenie)' },
+  { cat: 'Budowanie', cmd: 'usun obszar <x y z | nick> <x y z | nick>', desc: 'Wykopuje wszystko między dwoma rogami (współrzędne, nick gracza albo tu) – pyta o potwierdzenie' },
   { cat: 'Budowanie', cmd: 'rozbierz rusztowania', desc: 'Usuwa lewitującą ziemię z rusztowań' },
   { cat: 'Budowanie', cmd: 'projekty', desc: 'Lista budowli z Kreatora (buduj <nazwa>)' },
   // Wlasne komendy
