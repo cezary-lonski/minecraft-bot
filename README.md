@@ -57,13 +57,16 @@ Nie trzeba instalować Node.js ani niczego wpisywać w PowerShellu — instalato
 1. Pobierz **[Minecraft-Bot-Setup.exe](https://github.com/cezary-lonski/minecraft-bot/releases/latest/download/Minecraft-Bot-Setup.exe)**
    (najnowsza wersja; starsze są w [Releases](https://github.com/cezary-lonski/minecraft-bot/releases)).
 2. Uruchom go. Windows może pokazać „System Windows ochronił ten komputer" (program nie ma płatnego podpisu) —
-   kliknij **Więcej informacji → Uruchom mimo to**. Instalacja trwa kilka sekund, a na Pulpicie pojawi się skrót **Minecraft Bot**.
+   kliknij **Więcej informacji → Uruchom mimo to**. Instalator proponuje folder **`D:\Minecraft Bot\Program`** (jeśli masz dysk D;
+   można wybrać inny). Na Pulpicie pojawi się skrót **Minecraft Bot**.
 3. W Minecrafcie otwórz świat na LAN (**Esc → Open to LAN → Start LAN World**) i zapamiętaj port z czatu.
 4. W programie: **Graj → Nowy bot** — wpisz nick bota, port LAN i swój nick w grze, kliknij **Zapisz i graj**.
 5. Bot wchodzi do gry. Komendy wpisujesz na czacie gry albo w okienku **Czat i log** w programie (Tab podpowiada komendy).
 
 Kolejnym razem: **Graj → dwuklik na bota**. Program sam sprawdza aktualizacje na GitHubie i instaluje je przy zamknięciu
-(można to wyłączyć w zakładce **Aktualizacje**). Ustawienia i pamięć botów są w `%APPDATA%\Minecraft Bot`.
+(można to wyłączyć w zakładce **Aktualizacje**). Ustawienia, klucze i pamięć botów są obok programu, w **`D:\Minecraft Bot\Dane`**
+(przy programie na dysku C – w `%APPDATA%\Minecraft Bot`). Starsza wersja zainstalowana na dysku C przy aktualizacji sama
+przenosi się na D razem z danymi.
 
 ## Kilka botów naraz
 W zakładce **Graj** każdy bot ma własną kartę i własną pamięć świata: bazę, punkty, postawione budowle i przerwane zadanie

@@ -12,7 +12,28 @@ const { createAssistant } = require('./ai')
 let autoUpdater = null
 try { autoUpdater = require('electron-updater').autoUpdater } catch { /* brak w trybie deweloperskim */ }
 
-const DATA = app.getPath('userData') // %APPDATA%\minecraft-bot
+// Dane programu leza obok programu, na tym samym dysku: D:\Minecraft Bot\Program -> D:\Minecraft Bot\Dane
+// (nie w folderze programu - ten jest czyszczony przy aktualizacji). Program na dysku C zostawia dane w %APPDATA%.
+// Za pierwszym razem kopiujemy tam stare dane z %APPDATA% (boty, projekty, komendy, klucze).
+function moveDataNextToProgram() {
+  if (!app.isPackaged || process.argv.some(a => a.startsWith('--user-data-dir'))) return
+  const exeDir = path.dirname(process.execPath)
+  if (/^c:/i.test(exeDir)) return
+  const dataDir = path.basename(exeDir).toLowerCase() === 'program' ? path.join(path.dirname(exeDir), 'Dane') : exeDir + ' - Dane'
+  const oldDir = app.getPath('userData')
+  // "Local State" trzeba skopiowac - jest w nim klucz, ktorym system szyfruje zapisane klucze API
+  const ours = d => ['bots.json', 'app-settings.json', 'bots', 'projekty', 'komendy'].some(m => fs.existsSync(path.join(d, m)))
+  try {
+    if (!ours(dataDir) && ours(oldDir)) {
+      const skip = /^[\\/](Cache|Code Cache|GPUCache|GPUPersistentCache|GrShaderCache|ShaderCache|old_ShaderCache\w*|DawnCache|DawnGraphiteCache|DawnWebGPUCache|blob_storage|Crashpad|Network|Session Storage|Local Storage|Shared Dictionary|shared_proto_db|VideoDecodeStats|WebStorage|DIPS|declarative_performance_observer\.db.*)([\\/]|$)/i
+      fs.cpSync(oldDir, dataDir, { recursive: true, filter: src => !skip.test(src.slice(oldDir.length)) })
+    }
+    fs.mkdirSync(dataDir, { recursive: true })
+    app.setPath('userData', dataDir)
+  } catch (e) { console.log('dane obok programu:', e.message) }
+}
+moveDataNextToProgram()
+const DATA = app.getPath('userData') // D:\Minecraft Bot\Dane albo %APPDATA%\Minecraft Bot
 const PROFILES_FILE = path.join(DATA, 'bots.json')
 const APP_SETTINGS_FILE = path.join(DATA, 'app-settings.json')
 const BOT_DEFAULTS = {
