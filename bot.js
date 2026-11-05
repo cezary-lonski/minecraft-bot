@@ -1683,13 +1683,20 @@ function segmentClear(a, b) {
 }
 async function creativeFlyTo(target) {
   const dest = new Vec3(target.x + 0.5, target.y, target.z + 0.5)
-  const top = Math.max(bot.entity.position.y, dest.y) + 1
-  const route = [bot.entity.position.clone(), new Vec3(bot.entity.position.x, top, bot.entity.position.z), new Vec3(dest.x, top, dest.z), dest]
-  for (let i = 0; i < route.length - 1; i++) if (!segmentClear(route[i], route[i + 1])) return false
-  await bot.creative.flyTo(route[1])
-  await bot.creative.flyTo(route[2])
-  await bot.creative.flyTo(dest)
-  return true
+  const here = bot.entity.position.clone()
+  // w gore, w poprzek, w dol; gdy po drodze cos stoi (mury, wieze) - probujemy przeleciec wyzej
+  for (const extra of [1, 4, 8, 14, 22]) {
+    const top = Math.max(here.y, dest.y) + extra
+    const route = [here, new Vec3(here.x, top, here.z), new Vec3(dest.x, top, dest.z), dest]
+    let clear = true
+    for (let i = 0; i < route.length - 1 && clear; i++) clear = segmentClear(route[i], route[i + 1])
+    if (!clear) continue
+    await bot.creative.flyTo(route[1])
+    await bot.creative.flyTo(route[2])
+    await bot.creative.flyTo(dest)
+    return true
+  }
+  return false
 }
 
 // nazwa przedmiotu pasujacego do wzorca (np. /_(log|stem)$/ -> oak_log)
@@ -2382,6 +2389,10 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
     buildMoves.canDig = false
     buildMoves.allow1by1towers = true
     if (dirtId !== undefined) buildMoves.scafoldingBlocks = [dirtId]
+    // w kreatywnym bot lata - pieszo (np. w zamknietym pokoju) nie stawia slupkow z ziemi
+    if (isCreative()) {
+      for (const m of [buildMoves, terrainMoves]) { m.allow1by1towers = false; m.scafoldingBlocks = [] }
+    }
     const total = cells.filter(c => c.block !== 'air').length
     let placed = 0
     currentBuild = { label, total, phase: 'teren', terrainDone: 0, terrainTotal: 0, startedAt: Date.now(), basePlaced: 0, get placed() { return placed } }
