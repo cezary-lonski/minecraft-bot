@@ -49,6 +49,8 @@ Budowla to lista części "parts". Każda część ma "kind", pozycję x,y,z (pr
 - box: w, d, h, block, hollow; cylinder: r, h, block, hollow; sphere: r, block, hollow
 - voxels: dowolny kształt (posągi, zwierzęta, rzeźby, statki, litery 3D). palette: {"Y": "yellow_wool", ...}, layers: [{y: 0, rows: ["..YY..", ".YYYY."]}]
   Każda warstwa to poziom y (od dołu), wiersz = z (od przodu, 0 = najbliżej bota), znak = x (środek wiersza to x = 0). "." = pusto, "_" = wymuszone powietrze.
+  Zamiast warstw (albo obok nich): blocks - lista {x, y, z, block} z opcjami: attach {x,y,z} (do którego sąsiada przyczepić: dźwignia, drabina),
+  look {x,y,z} (gdzie bot patrzy przy stawianiu - tłok/dozownik patrzy głowicą w stronę bota), late: true (postaw na końcu, np. dźwignię), optional.
   Do posągów i zwierząt (np. kurczak, creeper, smok) używaj voxels: odwzoruj kształt i kolory z gry jak najwierniej, w odpowiedniej skali
   (mały mob 1:1 to kilka bloków; "duży posąg" to 2-6x). Rób bryłę pełną albo z sensowną grubością ścian i pamiętaj o nogach jako podporze.
 Materiały to nazwy bloków Minecraft Java (np. oak_planks, spruce, stone_bricks, cobblestone, bricks, quartz, deepslate_tiles, white_concrete,

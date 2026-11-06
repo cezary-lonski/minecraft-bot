@@ -851,7 +851,17 @@
         }
       })
     })
-    if (Array.isArray(o.blocks)) for (const b of o.blocks.slice(0, 20000)) if (Array.isArray(b) && b.length >= 4) c.put(b[0] | 0, b[1] | 0, b[2] | 0, String(b[3]))
+    // blocks: [x, y, z, blok] albo {x, y, z, block, facing, attach, look, optional, late} - np. tloki i dzwignie (redstone)
+    if (Array.isArray(o.blocks)) {
+      for (const b of o.blocks.slice(0, 20000)) {
+        if (Array.isArray(b) && b.length >= 4) c.put(b[0] | 0, b[1] | 0, b[2] | 0, String(b[3]))
+        else if (b && typeof b === 'object' && typeof b.block === 'string') {
+          const extra = {}
+          for (const k of ['facing', 'attach', 'look', 'optional', 'late', 'alt']) if (b[k] !== undefined) extra[k] = b[k]
+          c.put(b.x | 0, b.y | 0, b.z | 0, b.block, extra)
+        }
+      }
+    }
     return {}
   }
 

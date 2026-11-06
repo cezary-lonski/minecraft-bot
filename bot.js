@@ -2564,7 +2564,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
       setStatus(`buduje ${label}: ${placed}/${total} blokow (${where})${eta && eta.measured ? ' - zostalo ok. ' + fmtDuration(eta.etaSec) : ''}`)
       try {
         await goNearCell(c.pos, c.facing && worldDir(front, c.facing))
-        await placeBlockAt(it.name, c.pos, c.attach && worldDir(front, c.attach))
+        await placeBlockAt(it.name, c.pos, c.attach && worldDir(front, c.attach), c.look && worldDir(front, c.look))
         if (!counted.has(posKey(c.pos))) { counted.add(posKey(c.pos)); placed++ }
         if (CONTAINERS.includes(c.block)) { ownChests.add(posKey(c.pos)); saveJson('chests.json', [...ownChests]) }
         return 'done'
@@ -3813,7 +3813,9 @@ function haveCommand(word) {
 
 // ---------- stawianie blokow ----------
 // stawia blok w miejscu target (musi byc wolne); klika w sasiedni pelny blok, tak jak gracz
-async function placeBlockAt(itemName, target, attach) {
+// look: kierunek, w ktorym bot ma patrzec przy stawianiu - od niego zalezy obrot tloka, dozownika czy obserwatora
+// (tlok patrzy glowica w strone stawiajacego). Bez look bot patrzy na sciane bloku, do ktorej przyklada.
+async function placeBlockAt(itemName, target, attach, look) {
   const here = bot.blockAt(target)
   if (here && here.boundingBox === 'block') throw new Error(`miejsce jest zajete (${here.name})`)
   const sides = attach ? [[attach.x || 0, attach.y || 0, attach.z || 0]] : [[0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]]
@@ -3823,7 +3825,14 @@ async function placeBlockAt(itemName, target, attach) {
     const it = bot.inventory.items().find(i => i.name === itemName)
     if (!it) throw new Error(`nie mam ${itemName}`)
     await bot.equip(it, 'hand')
-    try { await bot.placeBlock(ref, new Vec3(-dx, -dy, -dz)) } catch {}
+    try {
+      if (look) {
+        await bot.look(Math.atan2(-look.x, -look.z), look.y ? Math.sign(look.y) * 1.5 : 0)
+        await bot._placeBlockWithOptions(ref, new Vec3(-dx, -dy, -dz), { forceLook: 'ignore', swingArm: 'right' })
+      } else {
+        await bot.placeBlock(ref, new Vec3(-dx, -dy, -dz))
+      }
+    } catch {}
     for (let t = 0; t < 20; t++) { // serwer potwierdza postawienie z opoznieniem
       if (bot.blockAt(target)?.name === itemName) return
       await sleep(100)
