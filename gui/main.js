@@ -140,7 +140,13 @@ function startBot(id) {
   if (p.mode !== 'lan' && !p.host) return { ok: false, error: `${p.name}: podaj adres serwera.` }
   fs.mkdirSync(botDir(id), { recursive: true })
   const proc = spawn(process.execPath, [path.join(__dirname, '..', 'bot.js')], { env: botEnv(p), cwd: botDir(id), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
-  const entry = { proc, buf: '', username: p.name }
+  // dziennik bota w pliku (do sprawdzania, czemu np. wyszedl z gry); stary przechodzi do .old, gdy urosnie ponad 2 MB
+  const logFile = path.join(botDir(id), 'dziennik.log')
+  try { if (fs.statSync(logFile).size > 2e6) fs.renameSync(logFile, logFile + '.old') } catch {}
+  let logStream = null
+  try { logStream = fs.createWriteStream(logFile, { flags: 'a' }); logStream.write(`\n=== ${new Date().toLocaleString('pl-PL')} start ${p.name} ===\n`) } catch {}
+  const writeLog = line => { try { logStream?.write(`${new Date().toLocaleTimeString('pl-PL')} ${line}\n`) } catch {} }
+  const entry = { proc, buf: '', username: p.name, writeLog }
   procs.set(id, entry)
   // zapamietujemy, kiedy bot ostatnio gral
   if (!p.temp) saveProfiles(loadProfiles().map(x => x.id === id ? { ...x, lastPlayed: Date.now() } : x))
@@ -150,12 +156,14 @@ function startBot(id) {
     entry.buf += chunk.toString('utf8')
     const lines = entry.buf.split(/\r?\n/)
     entry.buf = lines.pop()
-    for (const line of lines) handleBotLine(id, line)
+    for (const line of lines) { if (!line.startsWith('@@')) writeLog(line); handleBotLine(id, line) }
   })
   proc.stderr.on('data', chunk => {
-    for (const line of chunk.toString('utf8').split(/\r?\n/)) if (line.trim()) send('log', { id, kind: 'error', text: line })
+    for (const line of chunk.toString('utf8').split(/\r?\n/)) if (line.trim()) { writeLog('BLAD: ' + line); send('log', { id, kind: 'error', text: line }) }
   })
   proc.on('exit', code => {
+    writeLog(`koniec (kod ${code})`)
+    try { logStream?.end() } catch {}
     procs.delete(id)
     if (p.temp) {
       tempProfiles.delete(id)
@@ -631,7 +639,7 @@ async function handleAiRequest(id, req) {
   const res = await assistant.chat(req.text, { conv: 'bot:' + id, botId: id, inGame: true, botName: p.name, player: req.from, persona: NPC.ROLES[p.npc]?.persona })
   const text = res.ok ? res.text : 'AI: ' + res.error
   send('log', { id, kind: 'gui', text: `🤖 AI → ${text}` })
-  if (procs.get(id) === entry) entry.proc.stdin.write('@@AIREPLY ' + JSON.stringify({ id: req.id, text }) + '\n')
+  if (procs.get(id) === entry) entry.proc.stdin.write('@@AIREPLY ' + JSON.stringify({ id: req.id, text, error: !res.ok }) + '\n')
 }
 
 // ---------- aktualizacje (GitHub Releases) ----------

@@ -133,12 +133,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 const CHAT_DELAY = parseInt(process.env.MC_CHAT_DELAY || '3200')
 const chatQueue = []
 let lastChat = 0
+// Limit spamu w Minecrafcie: kazda wiadomosc i komenda dodaje 20 punktow, co tick (50 ms) ubywa 1, a powyzej 200 gra
+// wyrzuca gracza ("left the game"). Trzymamy sie ponizej 140 - wiadomosci i komendy czekaja, az licznik spadnie.
+let spamScore = 0
+let spamAt = Date.now()
+const spamNow = () => { spamScore = Math.max(0, spamScore - (Date.now() - spamAt) / 50); spamAt = Date.now(); return spamScore }
+function chatRaw(text) { spamNow(); spamScore += 20; bot.chat(text) }
+async function chatSafe(text) { while (spamNow() > 140) await sleep(100); chatRaw(text) }
 setInterval(() => {
   // przed wejsciem do swiata czat nie dziala - wiadomosci czekaja w kolejce
-  if (!chatQueue.length || Date.now() - lastChat < CHAT_DELAY || typeof bot.chat !== 'function') return
+  if (!chatQueue.length || Date.now() - lastChat < CHAT_DELAY || typeof bot.chat !== 'function' || spamNow() > 140) return
   const text = chatQueue.shift()
   lastChat = Date.now()
-  try { bot.chat(text) } catch (e) { console.log('[bot] Nie wyslano:', e.message) }
+  try { chatRaw(text) } catch (e) { console.log('[bot] Nie wyslano:', e.message) }
 }, 200)
 function queueChat(text) {
   if (chatQueue.length >= 8) chatQueue.shift() // nie zalewamy kolejki starymi komunikatami
@@ -856,7 +863,7 @@ async function runGameCommands(cmds, what, quiet) {
   const onMsg = m => { if (/permission|uprawnie|unknown or incomplete|nieznan|niekompletn|incorrect argument|nie masz/i.test(String(m))) denied = true }
   bot.on('messagestr', onMsg)
   try {
-    for (const c of cmds) { bot.chat(c); await sleep(quiet ? 60 : 400) }
+    for (const c of cmds) { await chatSafe(c); await sleep(quiet ? 60 : 400) }
     await sleep(quiet ? 300 : 1200)
   } finally { bot.removeListener('messagestr', onMsg) }
   if (denied && Date.now() - (runGameCommands.warned || 0) > 60000) {
@@ -5292,7 +5299,7 @@ function routeToAi(user, msg, whisper) {
 }
 function askAi(user, text, whisper = false) {
   if (aiPending && Date.now() - aiPending.at < 120000) { say('Chwila, jeszcze mysle nad poprzednim pytaniem.'); return }
-  aiPending = { id: Date.now().toString(36), at: Date.now(), user, whisper }
+  aiPending = { id: Date.now().toString(36), at: Date.now(), user, whisper, text }
   replyTo = whisper ? user : null
   say('Hmm, chwila...')
   process.stdout.write('@@AI ' + JSON.stringify({ id: aiPending.id, from: user, text }) + '\n')
@@ -5305,10 +5312,19 @@ function runAiCommand(m) {
   try { handle(null, String(m.text || '')) } catch (e) { console.log('[bot] komenda od AI:', e.message) } finally { aiCmd.active = false }
   process.stdout.write('@@AICMDRES ' + JSON.stringify({ id: m.id, ok: !aiCmd.unknown && !aiCmd.busy, unknown: aiCmd.unknown, busy: aiCmd.busy }) + '\n')
 }
+let aiLimitSaid = 0
+let aiFallback = false
 function aiReply(msg) {
   const p = aiPending
   aiPending = null
   if (p) replyTo = p.whisper ? p.user : null
+  // AI nie odpowiada (limit, brak internetu): o problemie mowimy raz na 10 minut, a polecenie wykonujemy sami
+  if (msg.error) {
+    if (Date.now() - aiLimitSaid > 600000) { aiLimitSaid = Date.now(); say(/limit/i.test(msg.text) ? 'Skonczyl mi sie limit AI na dzis - rozumiem tylko zwykle komendy.' : 'AI teraz nie odpowiada - rozumiem tylko zwykle komendy.') }
+    // (bez ponownego pytania AI - inaczej nieznany tekst krazylby: AI -> blad -> AI...)
+    if (p?.text) { aiFallback = true; try { handle(p.user, p.text, p.whisper) } catch (e) { console.log('[bot] komenda po AI:', e.message) } finally { aiFallback = false } }
+    return
+  }
   // czat gry: bez formatowania, krotkie kawalki (najwyzej 4 wiadomosci)
   const clean = String(msg.text || '').replace(/```[\s\S]*?```/g, ' ').replace(/[`*_#>]/g, '').replace(/\s+/g, ' ').trim()
   for (const part of (clean.match(/.{1,230}(\s|$)/g) || []).slice(0, 4)) say(part.trim())
@@ -5528,7 +5544,7 @@ function handleCommand(user, msg, whisper = false) {
   // komenda wydana przez AI, ktorej bot nie zna - AI dostaje informacje zwrotna zamiast "Nie znam komendy" na czacie
   if (aiCmd.active) { aiCmd.unknown = true; return }
   // AI w grze: niezrozumiala wiadomosc do bota (jego nick, /msg, a w LAN kazda od gracza z ustawien) idzie do AI
-  if (AI_ON && user && (aiAddressed || whisper || (LAN && process.env.MC_PLAYER)) && aiAllowed(user)) return askAi(user, text, whisper)
+  if (AI_ON && !aiFallback && user && (aiAddressed || whisper || (LAN && process.env.MC_PLAYER)) && aiAllowed(user)) return askAi(user, text, whisper)
   const fromPlayer = !process.env.MC_PLAYER || user?.toLowerCase() === process.env.MC_PLAYER.toLowerCase()
   if (whisper || !user || (LAN && fromPlayer)) say(`Nie znam komendy "${text}". Napisz "komendy".`)
 }
