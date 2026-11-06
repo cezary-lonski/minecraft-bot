@@ -1657,7 +1657,10 @@ async function creativeGive(name, amount) {
   while (left > 0) {
     // wolny slot: najpierw pasek szybkiego wyboru (36-44), potem reszta ekwipunku (9-35)
     const slot = [...Array(9).keys()].map(i => 36 + i).concat([...Array(27).keys()].map(i => 9 + i)).find(s => !bot.inventory.slots[s])
-    if (slot === undefined) { say('Mam pelny ekwipunek - nie zmieszcze wiecej.'); return count(name) >= amount }
+    if (slot === undefined) {
+      if (Date.now() - (creativeGive.warned || 0) > 120000) { creativeGive.warned = Date.now(); say('Mam pelny ekwipunek - nie zmieszcze wiecej.') }
+      return count(name) >= amount
+    }
     const n = Math.min(left, item.stackSize || 64)
     await bot.creative.setInventorySlot(slot, new Item(item.id, n))
     left -= n
@@ -1691,12 +1694,46 @@ async function creativeFlyTo(target) {
     let clear = true
     for (let i = 0; i < route.length - 1 && clear; i++) clear = segmentClear(route[i], route[i + 1])
     if (!clear) continue
-    await bot.creative.flyTo(route[1])
-    await bot.creative.flyTo(route[2])
-    await bot.creative.flyTo(dest)
+    for (const p of route.slice(1)) if (!await flyStraight(p)) return false
     return true
   }
   return false
+}
+
+// Lot po prostej jak bot.creative.flyTo, ale z limitem: flyTo z mineflayera leci, az dotrze - gdy serwer cofa bota
+// (cos zaslania, "moved wrongly"), wisi w powietrzu w nieskonczonosc. Tu: brak postepu przez 1.5 s albo za dlugo - false.
+async function flyStraight(dest) {
+  bot.creative.startFlying()
+  const step = 0.5
+  const limit = Date.now() + 4000 + bot.entity.position.distanceTo(dest) * 150
+  let best = Infinity
+  let bestAt = Date.now()
+  for (;;) {
+    const v = dest.minus(bot.entity.position)
+    const d = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+    if (d <= step) break
+    if (d < best - 0.1) { best = d; bestAt = Date.now() }
+    if (Date.now() - bestAt > 1500 || Date.now() > limit || !bot.entity) { console.log('[bot] lot: nie moge doleciec - probuje inaczej'); return false }
+    bot.physics.gravity = 0
+    bot.entity.velocity = new Vec3(0, 0, 0)
+    bot.entity.position.add(v.scaled(step / d))
+    await sleep(50)
+  }
+  bot.entity.position = dest.clone()
+  await new Promise(res => { const t = setTimeout(res, 1000); bot.once('move', () => { clearTimeout(t); res() }) })
+  return true
+}
+
+// obietnica z limitem czasu - zeby bot nie stal i nie "myslal" w nieskonczonosc (np. droga, ktorej nie ma)
+function withTimeout(promise, ms, what, onTimeout) {
+  let timer
+  return Promise.race([promise, new Promise((resolve, reject) => {
+    timer = setTimeout(() => { try { onTimeout?.() } catch {} reject(new Error(`${what}: brak postepu od ${Math.round(ms / 1000)} s`)) }, ms)
+  })]).finally(() => clearTimeout(timer))
+}
+// pathfinder.goto z limitem: po czasie zatrzymujemy go (zawracanie na drabinie, krazenie wokol celu)
+function gotoSafe(goal, ms = 25000) {
+  return withTimeout(bot.pathfinder.goto(goal), ms, 'droga', () => { bot.pathfinder.setGoal(null); bot.clearControlStates() })
 }
 
 // nazwa przedmiotu pasujacego do wzorca (np. /_(log|stem)$/ -> oak_log)
@@ -2083,16 +2120,17 @@ async function goNearCell(pos, facing) {
   if (facing) {
     // stoimy na poprzednim stopniu (albo na ziemi przed pierwszym) - tak schody obracaja sie w strone marszu
     const stand = pos.offset(-facing.x, 0, -facing.z)
-    await bot.pathfinder.goto(new goals.GoalNear(stand.x, stand.y, stand.z, 0.6))
+    await gotoSafe(new goals.GoalNear(stand.x, stand.y, stand.z, 0.6))
     return
   }
   const dist = bot.entity.position.distanceTo(pos.offset(0.5, 0.5, 0.5))
   const inside = bot.entity.position.floored().equals(pos) || bot.entity.position.floored().offset(0, 1, 0).equals(pos)
   if (dist < 4 && !inside) return
-  await bot.pathfinder.goto(new goals.GoalCompositeAll([
+  // limit czasu: bez niego bot potrafil cala noc wchodzic i schodzic po drabinie albo stac i liczyc droge, ktorej nie ma
+  await gotoSafe(new goals.GoalCompositeAll([
     new goals.GoalNear(pos.x, pos.y, pos.z, 3),
     new goals.GoalInvert(new goals.GoalNear(pos.x, pos.y, pos.z, 1))
-  ]))
+  ]), bot.pathfinder.movements?.canDig ? 45000 : 25000)
 }
 
 // czym podsypac dziure pod fundamentem
@@ -2139,6 +2177,7 @@ function buildEta() {
   const b = currentBuild
   if (!b) return null
   const done = b.placed
+  if (done !== b.lastDone) { b.lastDone = done; b.lastChangeAt = Date.now() }
   const left = Math.max(0, b.total - done)
   const secs = (Date.now() - b.startedAt) / 1000
   const made = done - (b.basePlaced || 0)
@@ -2165,7 +2204,10 @@ function timeCommand() {
     return
   }
   const left = e.left ? `Zostalo ok. ${fmtDuration(e.etaSec)}${e.measured ? '' : ' (szacunek na start, dokladniej za chwile)'}.` : 'Koncze!'
-  say(`${b.label}: ${e.done}/${e.total} blokow (${e.pct}%). ${left}`)
+  // dlugo nic nie przybywa - mowimy wprost, co teraz robimy (zbieranie materialu, droga), zamiast udawac, ze idzie
+  const idle = (Date.now() - (b.lastChangeAt || b.startedAt)) / 1000
+  const now = idle > 90 ? ` Od ${fmtDuration(idle)} nic nie przybylo - teraz: ${taskStatus || currentTask}.` : ''
+  say(`${b.label}: ${e.done}/${e.total} blokow (${e.pct}%). ${left}${now}`)
 }
 
 // materialy aktualnej budowy - automatyczne sprzatanie ekwipunku (makeRoom) ich nie wyrzuca
@@ -2181,10 +2223,11 @@ async function creativeRefill(name) {
   if (!mcData.itemsByName[name]) return false
   const free = () => [...Array(36).keys()].map(i => i + 9).some(s => !bot.inventory.slots[s])
   if (!free()) {
+    // od razu kilka miejsc (a nie jedno przy kazdym bloku) - wszystko i tak jest w menu
     const keep = new Set([name, 'dirt'])
-    const slot = [...Array(27).keys()].map(i => i + 9).concat([...Array(9).keys()].map(i => i + 36))
-      .find(s => bot.inventory.slots[s] && !keep.has(bot.inventory.slots[s].name) && bot.heldItem !== bot.inventory.slots[s])
-    if (slot !== undefined) await bot.creative.setInventorySlot(slot, null)
+    const slots = [...Array(27).keys()].map(i => i + 9).concat([...Array(9).keys()].map(i => i + 36))
+      .filter(s => bot.inventory.slots[s] && !keep.has(bot.inventory.slots[s].name) && bot.heldItem !== bot.inventory.slots[s]).slice(0, 9)
+    for (const slot of slots) { try { await bot.creative.setInventorySlot(slot, null) } catch {} }
   }
   return creativeGive(name, 64)
 }
@@ -2305,6 +2348,76 @@ async function placeStartMarker(feet) {
   } catch (e) { console.log('[bot] znacznik:', e.message) }
 }
 
+// naturalny teren (bez drewna, desek, cegiel itp. - to moze byc czyjs dom)
+const NATURAL_RE = /^(dirt|coarse_dirt|grass_block|podzol|mycelium|rooted_dirt|mud|moss_block|moss_carpet|stone|deepslate|tuff|calcite|granite|diorite|andesite|sand|red_sand|gravel|clay|snow|snow_block|ice|packed_ice|netherrack|end_stone|dripstone_block|.*_ore|.*_leaves|short_grass|tall_grass|grass|fern|large_fern|dead_bush|.*_tulip|dandelion|poppy|allium|azure_bluet|oxeye_daisy|cornflower|lily_of_the_valley|sweet_berry_bush)$/
+
+// Kolejnosc stawiania jak u gracza: pasami po 3 rzedy, waz tam i z powrotem - postaw, przesun sie, postaw...
+// Bot stawia wszystko w zasiegu reki i przesuwa sie dalej, zamiast biegac po calej warstwie.
+function snakeOrder(list) {
+  if (!list.length) return list
+  const minX = Math.min(...list.map(c => c.pos.x))
+  const strip = c => Math.floor((c.pos.x - minX) / 3)
+  return [...list].sort((a, b) => strip(a) - strip(b) || (strip(a) % 2 ? b.pos.z - a.pos.z : a.pos.z - b.pos.z) || a.pos.x - b.pos.x)
+}
+
+// Partia materialu w survivalu liczona miejscami w ekwipunku (nie blokami): 1200 blokow w 30 rodzajach nie miesci sie
+// w 36 slotach i bot stawal z pelnym ekwipunkiem. Bierzemy tyle komorek, ile zmiesci sie w wolnych slotach.
+function takeChunk(list, from, room) {
+  const need = {}
+  const have = {}
+  // slotow na n sztuk: tyle stackow, ile brakuje, +1 na polprodukty (deski, bruk do pieca)
+  const slotsFor = (name, n) => n ? Math.ceil(Math.max(0, n - have[name]) / (mcData.itemsByName[name]?.stackSize || 64)) + 1 : 0
+  let slots = 0
+  let i = from
+  for (; i < list.length && i - from < BUILD_CHUNK; i++) {
+    const name = list[i].block
+    if (have[name] === undefined) have[name] = haveOf(name)
+    const n = need[name] || 0
+    const delta = slotsFor(name, n + 1) - slotsFor(name, n)
+    if (slots + delta > room && i > from) break
+    slots += delta
+    need[name] = n + 1
+  }
+  return list.slice(from, i)
+}
+
+// Malo miejsca w ekwipunku przed kolejna partia: to, co nie jest potrzebne teraz (resztki innych materialow, lupy),
+// chowamy do najblizszej skrzyni. Narzedzi, jedzenia i ziemi na rusztowania nie ruszamy.
+async function stashForBuild(keep) {
+  if (bot.inventory.emptySlotCount() >= 10) return
+  const extra = bot.inventory.items().filter(i => !keep.has(i.name) && i.name !== 'dirt' && !KEEP_RE.test(i.name) && !mcData.foodsByName[i.name])
+  if (!extra.length) return
+  setStatus('chowam niepotrzebne rzeczy do skrzyni (malo miejsca w ekwipunku)')
+  let box = null
+  try { box = await withTimeout(openNearestContainer(), 40000, 'skrzynia', () => bot.pathfinder.setGoal(null)) } catch (e) { console.log('[bot] skrzynia:', e.message) }
+  if (!box) return
+  try {
+    for (const it of extra) {
+      if (bot.inventory.emptySlotCount() >= 16) break
+      try { await box.deposit(it.type, null, it.count) } catch { break }
+    }
+  } finally { box.close() }
+}
+
+// Droga do miejsca budowy (np. "pomoc" na drugim koncu mapy): bez kopania i bez slupkow - bot obchodzi domy,
+// zamiast sie przez nie przekopywac. W kreatywnym leci gora.
+async function travelToSite(center) {
+  if (bot.entity.position.distanceTo(center) < 24) return
+  setStatus(`ide na miejsce budowy (${center.x} ${center.y} ${center.z})`)
+  if (isCreative()) {
+    const up = new Vec3(center.x, Math.max(bot.entity.position.y, center.y) + 30, center.z)
+    if (await creativeFlyTo(up)) return
+  }
+  const careful = protectBuilds(new Movements(bot))
+  careful.canDig = false
+  careful.allow1by1towers = false
+  careful.scafoldingBlocks = []
+  const normal = bot.pathfinder.movements
+  bot.pathfinder.setMovements(careful)
+  try { await gotoSafe(new goals.GoalNearXZ(center.x, center.z, 8), 240000) } catch (e) { console.log('[bot] droga na budowe:', e.message) }
+  finally { bot.pathfinder.setMovements(normal) }
+}
+
 async function buildPlan(label, plan, origin, front, opts = {}) {
   // tu stoi bot, gdy zaczyna budowe (przy "kontynuuj" - tam, gdzie zaczal za pierwszym razem)
   const startFeet = opts.start ? new Vec3(opts.start.x, opts.start.y, opts.start.z) : bot.entity.position.floored()
@@ -2336,9 +2449,15 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
   terrainMoves.canDig = true
   terrainMoves.allow1by1towers = true
   if (dirtId !== undefined) terrainMoves.scafoldingBlocks = [dirtId]
+  // przy przygotowaniu terenu kopiemy tylko w obrysie budowli (+2 bloki) - nigdy przez cudze domy dookola
+  const box = cells.reduce((m, c) => ({ x1: Math.min(m.x1, c.pos.x), x2: Math.max(m.x2, c.pos.x), z1: Math.min(m.z1, c.pos.z), z2: Math.max(m.z2, c.pos.z),
+    y1: Math.min(m.y1, c.pos.y), y2: Math.max(m.y2, c.pos.y) }), { x1: Infinity, x2: -Infinity, z1: Infinity, z2: -Infinity, y1: Infinity, y2: -Infinity })
+  const inBox = p => p.x >= box.x1 - 2 && p.x <= box.x2 + 2 && p.z >= box.z1 - 2 && p.z <= box.z2 + 2
+  terrainMoves.exclusionAreasBreak.push(b => inBox(b.position) ? 0 : 1000)
+  const siteCenter = new Vec3(Math.round((box.x1 + box.x2) / 2), box.y1, Math.round((box.z1 + box.z2) / 2))
   protectedItems.add('dirt')
   const scaffoldDirt = async () => {
-    if (isCreative()) { if (count('dirt') < 32) await creativeGive('dirt', 64); return }
+    if (isCreative()) { if (count('dirt') < 32) await creativeRefill('dirt'); return }
     if (count('dirt') >= 16 || opts.decor) return
     bot.pathfinder.setMovements(normalMoves)
     setStatus(`zbieram ziemie na rusztowania (${label})`)
@@ -2400,11 +2519,16 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
 
     // 1) teren: od gory wykopujemy to, co przeszkadza (ziemia, trawa, kamien w obrysie)
     say(`Buduje ${label} (${total} blokow). Najpierw przygotowuje teren.`)
+    await travelToSite(siteCenter)
+    if (!running) return false
     bot.pathfinder.setMovements(terrainMoves)
     // najpierw liczymy, co trzeba wykopac - zeby "czas" pokazywal postep tez przy przygotowaniu terenu
-    const toClear = [...cells].sort((a, b) => b.y - a.y).filter(c => {
+    const clearLayers = [...new Set(cells.map(c => c.y))].sort((a, b) => b - a)
+    const toClear = clearLayers.flatMap(y => snakeOrder(cells.filter(c => c.y === y))).filter(c => {
       const b = bot.blockAt(c.pos)
-      return b && b.boundingBox === 'block' && !sameKind(b.name, c.block) && !(opts.decor && c.block !== 'air') // wystroj nie burzy tego, co juz stoi
+      if (!b || b.boundingBox !== 'block' || sameKind(b.name, c.block) || (opts.decor && c.block !== 'air')) return false // wystroj nie burzy tego, co juz stoi
+      // pomocnik kopie tylko naturalny teren - gdyby kolega podal zle miejsce, nie rozwali niczyjego domu
+      return !opts.helper || NATURAL_RE.test(b.name)
     })
     currentBuild.terrainTotal = toClear.length
     for (const c of toClear) {
@@ -2446,6 +2570,12 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
         return 'done'
       } catch (e) {
         console.log(`[bot] nie postawilem ${c.block}: ${e.message}`)
+        // nie da sie tam dojsc/doleciec - dwa razy i pomijamy (inaczej tysiace takich blokow to godziny stania)
+        if (/brak postepu|No path|Timeout|timeout/i.test(e.message)) {
+          try { bot.pathfinder.setGoal(null); bot.clearControlStates() } catch {}
+          c.stalls = (c.stalls || 0) + 1
+          if (c.stalls >= 2) { if (!c.optional) failed++; return 'drop' }
+        }
         return 'retry'
       }
     }
@@ -2464,17 +2594,22 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
       return pending
     }
     for (const y of layers) {
-      const pending = cells.filter(c => c.y === y && c.block !== 'air' && !c.late)
+      const pending = snakeOrder(cells.filter(c => c.y === y && c.block !== 'air' && !c.late))
       const where = `warstwa ${y - layers[0] + 1}/${layers.length}`
       if (batched && !isCreative() && pending.length) {
         // duza budowla w survivalu: material na warstwe partiami, ktore mieszcza sie w ekwipunku (stawiamy partie i wracamy po nastepna)
         const left = pending.filter(c => notPlaced(c))
-        const parts = Math.ceil(left.length / BUILD_CHUNK)
-        for (let i = 0; i < left.length && running; i += BUILD_CHUNK) {
-          const chunk = left.slice(i, i + BUILD_CHUNK)
+        let part = 0
+        for (let i = 0; i < left.length && running;) {
+          await makeRoom()
+          await stashForBuild(new Set(left.slice(i, i + BUILD_CHUNK).map(c => c.block)))
+          const chunk = takeChunk(left, i, Math.max(6, bot.inventory.emptySlotCount() - 6))
+          i += chunk.length
+          part++
           bot.pathfinder.setMovements(normalMoves)
-          const what = parts > 1 ? `${label} (${where}, czesc ${i / BUILD_CHUNK + 1}/${parts})` : `${label} (${where})`
+          const what = i < left.length || part > 1 ? `${label} (${where}, czesc ${part})` : `${label} (${where})`
           if (!await gatherMaterials(chunk.filter(c => !c.optional && notPlaced(c)), what)) return false
+          await travelToSite(siteCenter)
           if (wantExtras) for (const c of chunk.filter(o => o.optional)) if (haveOf(c.block) < 1) { try { await obtain(c.block, 1) } catch {} }
           await scaffoldDirt()
           bot.pathfinder.setMovements(buildMoves)
@@ -4107,7 +4242,26 @@ function helpCommand(arg) {
   const name = arg && mates.find(t => t.from.toLowerCase().startsWith(arg.toLowerCase()))?.from
   if (arg && !name) { say(`Nie widze bota ${arg}. Dzialaja: ${mates.map(t => t.from).join(', ')}.`); return }
   const target = name ? mates.find(t => t.from === name) : (mates.find(t => t.job) || mates.find(t => t.busy) || mates[0])
+  // praca daleko od kolegi (np. stara, nieaktualna) - nie idziemy na slepo kopac na drugi koniec mapy
+  if (target.job?.origin && target.pos && Math.hypot(target.job.origin.x - target.pos.x, target.job.origin.z - target.pos.z) > 96) {
+    say(`${target.from} jest daleko od swojej budowy (${target.job.origin.x} ${target.job.origin.z}) - ide do niego i go pilnuje.`)
+    return joinJob(target.from, null, false)
+  }
+  if (target.job?.origin) say(`Ide pomoc ${target.from}: ${target.job.label || target.job.type} na ${target.job.origin.x} ${target.job.origin.y} ${target.job.origin.z}.`)
   return joinJob(target.from, target.job, false)
+}
+
+// "pomoc <ja> <komu>" jest wyraznym poleceniem: przerywamy biezace zadanie i idziemy pomagac
+async function helpNow(arg) {
+  if (running || activeTasks > 0) {
+    say(`Przerywam ${currentTask || 'zadanie'} i ide pomoc ${arg}.`)
+    running = false
+    if (pendingQuestion) pendingQuestion.resolve(pendingQuestion.def)
+    try { bot.pathfinder.setGoal(null); bot.stopDigging(); bot.clearControlStates() } catch {}
+    for (let i = 0; i < 60 && activeTasks > 0; i++) await sleep(250)
+    if (activeTasks > 0) { say('Nie moge przerwac poprzedniego zadania - napisz "stop" i sprobuj jeszcze raz.'); return }
+  }
+  return helpCommand(arg)
 }
 
 // ---------- wymiana przedmiotow ----------
@@ -4717,7 +4871,7 @@ function handleCommand(user, msg, whisper = false) {
     const me = bot.username.toLowerCase()
     const isMe = n => n === me || (n.length >= 3 && me.startsWith(n))
     // "pomoc <kto> <komu>" - na czacie slysza to wszystkie boty, a reaguje tylko ten pierwszy
-    if (names.length >= 2) return isMe(names[0]) ? helpCommand(names[1]) : undefined
+    if (names.length >= 2) return isMe(names[0]) ? helpNow(names[1]) : undefined
     if (names[0] && isMe(names[0])) return // "pomoc <moj nick>" - nikt nie pomaga sam sobie
     return helpCommand(names[0])
   }
