@@ -829,6 +829,43 @@ let makeSeq = 0
 const pendingMakes = new Map() // posagi zamowione w programie: id -> kto prosil
 const RANGED = ['skeleton', 'stray', 'bogged', 'pillager', 'blaze', 'witch', 'drowned']
 
+// ---------- komendy gry (/give, czary): bot pyta, czy moze ich uzyc ----------
+// "tak" - teraz (i przez 10 minut), "zawsze" - zapamietane na stale ("komendy nie" cofa), "nie" - bez komend
+let cmdPermission = loadJson('komendy_zgoda.json', { always: false })
+let cmdAllowedUntil = 0
+let cmdAsking = null
+async function cmdPermitted(what, example) {
+  if (cmdPermission.always || Date.now() < cmdAllowedUntil) return true
+  if (cmdAsking) return cmdAsking // juz pytamy (np. kilka machniec rozdzka) - czekamy na te sama odpowiedz
+  cmdAsking = (async () => {
+    const shown = example.length > 70 ? example.slice(0, 70) + '...' : example
+    const ans = await askUser(`Moge uzyc komendy ${shown} (${what})? (tak / zawsze / nie)`,
+      [[/^(tak|ok|mozesz|dawaj|jasne)$/, 'yes'], [/^(zawsze|zawsze tak|zezwalaj zawsze|tak zawsze)$/, 'always'], [/^(nie|stop|nie wolno)$/, 'no']],
+      60000, 'no', 'Nie dostalem odpowiedzi - nie uzywam komendy.')
+    if (ans === 'always') { cmdPermission = { always: true }; saveJson('komendy_zgoda.json', cmdPermission); say('Zapamietam: komend moge uzywac zawsze ("komendy nie" - cofasz).') }
+    if (ans === 'yes') cmdAllowedUntil = Date.now() + 10 * 60000
+    if (ans === 'no') say('Dobra, bez komend.')
+    return ans !== 'no'
+  })()
+  try { return await cmdAsking } finally { cmdAsking = null }
+}
+// wpisuje komendy po kolei; gdy gra odpisze bledem uprawnien - podpowiada, co wlaczyc
+async function runGameCommands(cmds, what, quiet) {
+  if (!cmds.length || !await cmdPermitted(what, cmds[0])) return false
+  let denied = false
+  const onMsg = m => { if (/permission|uprawnie|unknown or incomplete|nieznan|niekompletn|incorrect argument|nie masz/i.test(String(m))) denied = true }
+  bot.on('messagestr', onMsg)
+  try {
+    for (const c of cmds) { bot.chat(c); await sleep(quiet ? 60 : 400) }
+    await sleep(quiet ? 300 : 1200)
+  } finally { bot.removeListener('messagestr', onMsg) }
+  if (denied && Date.now() - (runGameCommands.warned || 0) > 60000) {
+    runGameCommands.warned = Date.now()
+    say('Gra nie pozwala mi na komendy. Otworz swiat w LAN z "Zezwol na kody: TAK" (albo daj mi OP na serwerze).')
+  }
+  return !denied
+}
+
 // "daj excalibur [nick]", "daj sobie zbroja smoka" - bot wpisuje /give (wymaga wlaczonych kodow w swiecie)
 async function giveModItem(user, found) {
   const { mod, def, rest } = found
@@ -839,16 +876,8 @@ async function giveModItem(user, found) {
       : (user || process.env.MC_PLAYER || bot.username)
   const v = bot.registry.version
   const fmt = v['>=']('1.21.5') ? 'snbt' : v['>=']('1.20.5') ? 'json' : 'nbt'
-  // brak uprawnien do komend: serwer odpisuje bledem - wtedy podpowiadamy, co wlaczyc
-  let denied = false
-  const onMsg = m => { if (/permission|uprawnie|unknown or incomplete|nieznan|niekompletn|incorrect argument|nie masz/i.test(String(m))) denied = true }
-  bot.on('messagestr', onMsg)
-  try {
-    for (const c of ModsLib.giveCommands(def, nick, fmt)) { bot.chat(c); await sleep(400) }
-    await sleep(1200)
-  } finally { bot.removeListener('messagestr', onMsg) }
-  if (denied) { say('Gra nie pozwala mi na /give. Otworz swiat w LAN z "Zezwol na kody: TAK" (albo daj mi OP na serwerze).'); return }
   const label = def.name || def.key
+  if (!await runGameCommands(ModsLib.giveCommands(def, nick, fmt), `daje ${label} dla ${nick}`)) return
   say(nick === bot.username ? `Mam ${label}!` : `${label} dla ${nick}!`)
   // dla siebie: od razu zakladamy / bierzemy do reki
   if (nick === bot.username) {
@@ -967,6 +996,62 @@ async function shootAt(ent) {
   return true
 }
 const canShoot = () => modOn('lucznik') && bot.inventory.items().some(i => i.name === 'bow') && (isCreative() || bot.inventory.items().some(i => /arrow$/.test(i.name)))
+
+// MAGIA: gracz machnie rozdzka (lewy przycisk) -> bot rzuca czar komendami gry tam, gdzie gracz patrzy.
+// Czaruje jeden bot (o "najmniejszym" nicku), zeby kilka botow nie rzucalo tego samego.
+const lastCast = new Map()
+function heldName(ent) {
+  const it = ent.heldItem || ent.equipment?.[0]
+  if (!it) return ''
+  // nazwa moze przyjsc jako tekst, JSON albo NBT (komponent tekstowy) - zalezy od wersji gry
+  const nbtText = x => {
+    if (x == null) return ''
+    if (typeof x === 'string') return x
+    if (x.type === 'string') return x.value
+    if (x.type === 'compound') return nbtText(x.value?.text) + (x.value?.extra ? (x.value.extra.value?.value || []).map(nbtText).join('') : '')
+    if (x.type === 'list') return (x.value?.value || []).map(nbtText).join('')
+    if (typeof x === 'object' && 'text' in x) return nbtText(x.text) + (Array.isArray(x.extra) ? x.extra.map(nbtText).join('') : '')
+    return ''
+  }
+  let n = it.customName
+  if (n && typeof n === 'object') n = nbtText(n)
+  if (typeof n === 'string' && n.startsWith('{')) { try { const j = JSON.parse(n); n = j.text || j.extra?.map(e => e.text || e).join('') || '' } catch {} }
+  return String(n || '')
+}
+bot.on('entitySwingArm', ent => {
+  if (!modOn('magia') || !ent || ent.type !== 'player' || ent === bot.entity || !mcData) return
+  const kind = ModsLib.wandByName(heldName(ent))
+  if (!kind) return
+  const caster = [bot.username, ...teammates().map(t => t.from)].sort((a, b) => a.localeCompare(b))[0]
+  if (caster !== bot.username) return
+  if (Date.now() - (lastCast.get(ent.username) || 0) < 700) return
+  lastCast.set(ent.username, Date.now())
+  castSpell(ent, kind).catch(e => console.log('[bot] czar:', e.message))
+})
+async function castSpell(ent, kind) {
+  const f = n => n.toFixed(2)
+  const eye = ent.position.offset(0, 1.62, 0)
+  const dir = new Vec3(-Math.sin(ent.yaw) * Math.cos(ent.pitch), Math.sin(ent.pitch), -Math.cos(ent.yaw) * Math.cos(ent.pitch))
+  const hit = bot.world.raycast ? bot.world.raycast(eye, dir, 48) : null
+  const tgt = hit ? (hit.intersect || hit.position.offset(0.5, 1, 0.5)) : eye.plus(dir.scaled(24))
+  const at = `${f(tgt.x)} ${f(tgt.y)} ${f(tgt.z)}`
+  const near = `x=${f(tgt.x)},y=${f(tgt.y)},z=${f(tgt.z)},distance=..4`
+  const from = eye.plus(dir.scaled(2))
+  const p = `${f(from.x)} ${f(from.y)} ${f(from.z)}`
+  const v = dir.scaled(1.5)
+  const motion = `Motion:[${f(v.x)}d,${f(v.y)}d,${f(v.z)}d]`
+  const who = ent.username
+  const S = {
+    ogien: [0, 1, 2].map(i => { const s = from.plus(dir.scaled(i)); return `/summon small_fireball ${f(s.x)} ${f(s.y)} ${f(s.z)} {${motion},acceleration_power:0.1d,power:[${f(v.x / 15)}d,${f(v.y / 15)}d,${f(v.z / 15)}d]}` }).concat([`/particle flame ${p} 0.3 0.3 0.3 0.08 40`]),
+    lod: [`/particle snowflake ${at} 1.5 1 1.5 0.02 80`, `/effect give @e[type=!player,${near}] slowness 8 4`, `/fill ${f(tgt.x - 2)} ${f(tgt.y - 2)} ${f(tgt.z - 2)} ${f(tgt.x + 2)} ${f(tgt.y)} ${f(tgt.z + 2)} ice replace water`, `/summon snowball ${p} {${motion}}`],
+    piorun: [`/summon lightning_bolt ${at}`],
+    lewitacja: [`/effect give @e[type=!player,${near}] levitation 4 1`, `/particle end_rod ${at} 1 1 1 0.05 40`],
+    leczenie: [`/effect give ${who} regeneration 6 2`, `/effect give ${who} instant_health 1 1`, `/particle heart ${f(ent.position.x)} ${f(ent.position.y + 2)} ${f(ent.position.z)} 0.6 0.4 0.6 0 8`],
+    swiatlo: [`/effect give ${who} night_vision 60 0 true`, `/setblock ${Math.floor(tgt.x)} ${Math.floor(tgt.y)} ${Math.floor(tgt.z)} light[level=15] keep`, `/particle end_rod ${at} 0.3 0.3 0.3 0.02 20`],
+    czarna: [`/summon lightning_bolt ${at}`, `/effect give @e[type=!player,${near}] levitation 3 2`, `/particle soul_fire_flame ${at} 1 1 1 0.05 60`]
+  }
+  if (S[kind]) await runGameCommands(S[kind], `czar dla ${who}`, true)
+}
 
 // WIEDZA O MOBACH: co robic z konkretnym mobem (wywolywane z instynktu; true = zalatwione)
 async function mobKnowledge(closest, dist, power) {
@@ -3313,7 +3398,8 @@ const matchBuildType = t => {
 // Wejscie od strony z1. keep: komorki "x,z", ktorych nie zastawiamy (schody, przejscia, istniejace meble).
 // theme: 'wood' (drewno, czerwony dywan, latarnie) albo 'end' (purpur, fiolet, end rody).
 function decorateRoom(p, room) {
-  const { x1, x2, z1, z2, y, h, theme = 'wood', keep = [], library = false, bed = true } = room
+  // utilities: co postawic przy prawej scianie (np. w zamku bez pieca: tylko skrzynie i beczki)
+  const { x1, x2, z1, z2, y, h, theme = 'wood', keep = [], library = false, bed = true, utilities = ['crafting_table', 'furnace', 'smoker', 'chest', 'barrel'] } = room
   const free = new Set(keep)
   const used = new Set()
   const put = (x, yy, z, block, extra = {}) => {
@@ -3343,7 +3429,6 @@ function decorateRoom(p, room) {
     if (put(cx, y, tz, end ? 'end_stone_brick_wall' : 'oak_fence')) p.push({ x: cx, y: y + 1, z: tz, block: end ? 'purpur_slab' : 'oak_pressure_plate' })
   }
   // 3) przy prawej scianie: stol warsztatowy, piec, wedzarnia, skrzynie
-  const utilities = ['crafting_table', 'furnace', 'smoker', 'chest', 'barrel']
   let zz = z1 + 2
   for (const u of utilities) { if (zz > z2 - 1) break; put(x2, y, zz, u); zz++ }
   // 4) przy lewej scianie: lozko (wezglowie przy scianie) i obok szafka z ksiazkami
@@ -5332,6 +5417,15 @@ function handleCommand(user, msg, whisper = false) {
     const mod = ModsLib.findItem(self ? args.slice(1).join(' ') : args.join(' '))
     if (mod) return giveModItem(user, self ? { ...mod, rest: 'sobie' } : mod)
     const { word, amount } = splitAmount(args.join(' ')); return giveItems(player, word, amount)
+  }
+  // zgoda na komendy gry (/give, czary): "komendy zawsze" / "komendy nie" / "komendy pytaj"
+  const perm = c.match(/^komendy (zawsze|nie|pytaj)$/)
+  if (perm) {
+    cmdPermission = { always: perm[1] === 'zawsze' }
+    cmdAllowedUntil = 0
+    saveJson('komendy_zgoda.json', cmdPermission)
+    say(perm[1] === 'zawsze' ? 'Dobra - komend gry uzywam bez pytania.' : perm[1] === 'nie' ? 'Dobra - przed kazda komenda gry zapytam.' : 'Bede pytal przed komendami gry.')
+    return
   }
   if (c === 'mody' || c === 'moje mody') {
     const on = ModsLib.MODS.filter(m => MODS.has(m.id))

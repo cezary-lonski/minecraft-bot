@@ -54,6 +54,22 @@
       ]
     },
     {
+      id: 'magia', kind: 'items', icon: '🪄', name: 'Magia (Świat Harry\'ego)',
+      desc: 'Różdżki, które naprawdę czarują: trzymasz różdżkę i machasz (lewy przycisk myszy), a bot rzuca czar komendami gry. Do tego miotły (elytry z rakietami).',
+      items: [
+        { key: 'rozdzka ognia', aliases: ['incendio'], name: 'Rozdzka Ognia', item: 'blaze_rod', color: 'gold', lore: 'Incendio! - zieje ogniem', glint: true, wand: 'ogien' },
+        { key: 'rozdzka lodu', aliases: ['glacius'], name: 'Rozdzka Lodu', item: 'breeze_rod', color: 'aqua', lore: 'Glacius! - zamraza', glint: true, wand: 'lod' },
+        { key: 'rozdzka blyskawic', aliases: ['blyskawica'], name: 'Rozdzka Blyskawic', item: 'stick', color: 'yellow', lore: 'Piorun tam, gdzie patrzysz', glint: true, wand: 'piorun' },
+        { key: 'rozdzka lewitacji', aliases: ['wingardium leviosa', 'leviosa'], name: 'Rozdzka Lewitacji', item: 'stick', color: 'light_purple', lore: 'Wingardium Leviosa!', glint: true, wand: 'lewitacja' },
+        { key: 'rozdzka leczenia', aliases: ['episkey'], name: 'Rozdzka Leczenia', item: 'stick', color: 'green', lore: 'Episkey! - leczy', glint: true, wand: 'leczenie' },
+        { key: 'rozdzka swiatla', aliases: ['lumos'], name: 'Rozdzka Swiatla', item: 'end_rod', color: 'white', lore: 'Lumos! - swiatlo', glint: true, wand: 'swiatlo' },
+        { key: 'czarna rozdzka', aliases: ['starsza rozdzka', 'czarna rozdzka'], name: 'Czarna Rozdzka', item: 'stick', color: 'dark_purple', lore: 'Najpotezniejsza z rozdzek', glint: true, wand: 'czarna' },
+        { key: 'nimbus 2000', aliases: ['nimbus', 'miotla'], name: 'Nimbus 2000', item: 'elytra', color: 'gold', lore: 'Miotla wyscigowa', ench: { mending: 1 }, unbreakable: true, extra: [['firework_rocket', 64]] },
+        { key: 'blyskawica', aliases: ['firebolt'], name: 'Blyskawica', item: 'elytra', color: 'red', lore: 'Najszybsza miotla swiata', ench: { mending: 1 }, unbreakable: true, extra: [['firework_rocket', 64]] },
+        { key: 'kometa', name: 'Kometa 260', item: 'elytra', color: 'aqua', lore: 'Dobra miotla na poczatek', unbreakable: true, extra: [['firework_rocket', 32]] }
+      ]
+    },
+    {
       id: 'uczta', kind: 'items', icon: '🍗', name: 'Uczta',
       desc: 'Najlepsze jedzenie: magiczne złote jabłka, steki i ciasto.',
       items: [
@@ -139,6 +155,7 @@
       parts.push(fmt === 'snbt' ? `enchantments={${list}}` : `enchantments={levels:{${list}}}`)
     }
     if (d.unbreakable) parts.push('unbreakable={}')
+    if (d.glint) parts.push('enchantment_glint_override=true')
     if (d.effects) parts.push(`potion_contents={custom_color:${d.potionColor || 0},custom_effects:[${d.effects.map(([id, a, s]) => `{id:"${id}",amplifier:${a},duration:${s * 20}}`).join(',')}]}`)
     return d.item + (parts.length ? `[${parts.join(',')}]` : '')
   }
@@ -156,5 +173,13 @@
     return out
   }
 
-  return { MODS, findItem, itemArg, giveCommands, strip }
+  // rozdzka po nazwie przedmiotu (np. "Rozdzka Ognia") -> rodzaj czaru
+  function wandByName(name) {
+    const t = strip(name)
+    if (!t) return null
+    for (const mod of MODS) for (const d of mod.items || []) if (d.wand && strip(d.name) === t) return d.wand
+    return null
+  }
+
+  return { MODS, findItem, itemArg, giveCommands, strip, wandByName }
 })

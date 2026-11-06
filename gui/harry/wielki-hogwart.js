@@ -19,6 +19,7 @@ function generate() {
   const PINNACLE = 'end_stone_brick_wall'
   const CARVED = 'chiseled_sandstone'
   const DOOR = 'dark_oak_door'
+  const CHAIN = 'iron_chain' // od 1.21.9 (wczesniej 'chain')
   const ROOF = 'deepslate_tiles'
   const GLASS = 'gray_stained_glass'
   const TIP = 'lightning_rod'
@@ -82,12 +83,13 @@ function generate() {
       const q = Math.floor((r - 1) / Math.SQRT2)
       const keep = [`${lx - opp.x},${lz - opp.z}`, `${cx},${cz}`]
       if (door) keep.push(`${cx + door.x * (r - 1)},${cz + door.z * (r - 1)}`, `${cx + door.x * q},${cz + door.z * q}`)
-      for (let y = y0; y < y0 + h - 2; y += floors) rooms.push({ x1: cx - q, x2: cx + q, z1: cz - q, z2: cz + q, y, h: Math.min(4, floors - 1), theme: 'wood', bed: y > y0, keep, round: true })
+      for (let y = y0; y < y0 + h - 2; y += floors) rooms.push({ x1: cx - q, x2: cx + q, z1: cz - q, z2: cz + q, y, h: Math.min(4, floors - 1), theme: 'wood', bed: y > y0, keep, round: true, utilities: ['chest', 'barrel'] })
     }
     // kolnierz (szerszy pierscien) i dach
     const top = y0 + h
     for (const [dx, dz] of disk(r + 1)) set(cx + dx, top, cz + dz, TRIM)
     if (flat) {
+      if (r >= 2) set(lx, top, lz, 'ladder', { attach: { x: opp.x, z: opp.z } }) // wyjscie na taras
       for (const [dx, dz] of ringOf(r + 1)) if ((dx + dz) % 2 === 0) set(cx + dx, top + 1, cz + dz, PINNACLE)
       return top + 1
     }
@@ -96,6 +98,29 @@ function generate() {
 
   // pokoje do umeblowania (lozka, stoly, skrzynie, regaly, dywany - stawia je bot przy budowie)
   const rooms = []
+  // KLASA: rzedy lawek z krzeslami przodem do nauczyciela, biurko nauczyciela z pulpitem i tablica na scianie
+  // (nauczyciel przy koncu dlugiej osi sali; ladder - pole drabiny, ktore zostaje wolne)
+  function classroom(x1, x2, z1, z2, y, axis, ladder) {
+    const P = (a, b, yy, block, extra) => axis === 'x' ? set(a, yy, b, block, extra) : set(b, yy, a, block, extra)
+    const [a1, a2] = axis === 'x' ? [x1, x2] : [z1, z2]
+    const [b1, b2] = axis === 'x' ? [z1, z2] : [x1, x2]
+    const mid = Math.floor((b1 + b2) / 2)
+    const isLadder = (a, b) => ladder && (axis === 'x' ? a === ladder[0] && b === ladder[1] : b === ladder[0] && a === ladder[1])
+    // tablica na scianie za nauczycielem
+    for (let b = mid - 2; b <= mid + 2; b++) for (let yy = y + 1; yy <= y + 2; yy++) P(a2 + 1, b, yy, 'black_concrete')
+    for (let b = mid - 1; b <= mid + 1; b++) P(a2 - 2, b, y, 'dark_oak_planks')
+    P(a2 - 1, mid, y, 'dark_oak_stairs', { facing: { x: axis === 'x' ? 1 : 0, z: axis === 'x' ? 0 : 1 }, optional: true })
+    P(a2 - 2, mid + 2, y, 'lectern', { optional: true })
+    // lawki (2 bloki), krzeslo za kazda; przejscie srodkiem
+    for (let a = a1 + 2; a <= a2 - 5; a += 3) {
+      for (let b = b1 + 1; b <= b2 - 1; b++) {
+        if (Math.abs(b - mid) <= 0 || isLadder(a, b) || isLadder(a - 1, b)) continue
+        P(a, b, y, 'dark_oak_planks')
+        P(a - 1, b, y, 'spruce_stairs', { facing: { x: axis === 'x' ? -1 : 0, z: axis === 'x' ? 0 : -1 }, optional: true })
+        if ((a + b) % 3 === 0) P(a, b, y + 1, 'candle', { optional: true })
+      }
+    }
+  }
   // miejsca do oswietlenia (latarnie dokladamy na koncu, gdy cala bryla juz stoi)
   const lightHalls = []
   const lightTowers = []
@@ -144,7 +169,7 @@ function generate() {
       }
     }
     // komnaty na pietrach
-    if (s >= 7) for (let y = y0; y < y0 + h - 2; y += floors) rooms.push({ x1: x1 + 1, x2: x2 - 1, z1: z1 + 1, z2: z2 - 1, y, h: Math.min(4, floors - 1), theme: 'wood', bed: y > y0, keep: [`${lx - 1},${lz}`, `${lx},${lz - 1}`] })
+    if (s >= 7) for (let y = y0; y < y0 + h - 2; y += floors) rooms.push({ x1: x1 + 1, x2: x2 - 1, z1: z1 + 1, z2: z2 - 1, y, h: Math.min(4, floors - 1), theme: 'wood', bed: y > y0, utilities: ['chest', 'barrel'], keep: [`${lx - 1},${lz}`, `${lx},${lz - 1}`] })
     // zegar na froncie
     if (clock) {
       const cy = y0 + h - 6
@@ -175,7 +200,7 @@ function generate() {
   }
 
   // HALA (Wielka Sala, skrzydla): sciany, przypory z pinaklami, wysokie okna, stromy dach dwuspadowy (albo plaski z blankami)
-  function hall({ x1, x2, z1, z2, y0 = Y0, h, axis = 'x', rise = 1, buttress = 6, flat = false, rows = 1, floorBlock = TRIM, storeys = 1, furnish = true, library = false, lights = true }) {
+  function hall({ x1, x2, z1, z2, y0 = Y0, h, axis = 'x', rise = 1, buttress = 6, flat = false, rows = 1, floorBlock = TRIM, storeys = 1, furnish = true, library = false, lights = true, classes = null }) {
     if (lights) lightHalls.push({ x1, x2, z1, z2, y0, h, axis, storeys })
     for (let x = x1; x <= x2; x++) for (let z = z1; z <= z2; z++) set(x, y0 - 1, z, floorBlock)
     for (let y = y0; y < y0 + h; y++) {
@@ -219,7 +244,8 @@ function generate() {
     for (let s = 0; s < storeys; s++) {
       const fy = y0 + s * sh
       if (s > 0) for (let x = x1 + 1; x < x2; x++) for (let z = z1 + 1; z < z2; z++) if (!(x === lx && z === lz)) set(x, fy - 1, z, 'spruce_planks')
-      if (furnish) rooms.push({ x1: x1 + 1, x2: x2 - 1, z1: z1 + 1, z2: z2 - 1, y: fy, h: Math.min(5, sh - 1), theme: 'wood', bed: false, library, keep: [`${lx - 1},${lz}`, `${lx},${lz - 1}`, `${lx},${lz}`] })
+      if (classes && classes[s]) classroom(x1 + 1, x2 - 1, z1 + 1, z2 - 1, fy, axis, [lx, lz])
+    else if (furnish) rooms.push({ x1: x1 + 1, x2: x2 - 1, z1: z1 + 1, z2: z2 - 1, y: fy, h: Math.min(5, sh - 1), theme: 'wood', bed: false, library, utilities: ['chest', 'barrel'], keep: [`${lx - 1},${lz}`, `${lx},${lz - 1}`, `${lx},${lz}`] })
     }
     const top = y0 + h
     const width = across[1] - across[0] + 1
@@ -420,7 +446,7 @@ function generate() {
   for (let y = Y0; y < Y0 + 4; y++) for (let z = 60; z <= 62; z++) { cut(22, y, z); cut(23, y, z) }
 
   // WIEZA ASTRONOMICZNA - najwyzsza, z przylegajacymi wiezyczkami
-  roundTower({ cx: -6, cz: 100, r: 5, h: 66, rise: 3, door: { x: 0, z: -1 } })
+  roundTower({ cx: -6, cz: 100, r: 5, h: 66, rise: 3, door: { x: 0, z: -1 }, flat: true }) // taras na szczycie - do obserwacji gwiazd
   roundTower({ cx: -12, cz: 95, r: 3, h: 56, rise: 3, door: { x: -1, z: 0 } })
   roundTower({ cx: 0, cz: 106, r: 2, h: 50, rise: 3, door: { x: 0, z: 1 } })
 
@@ -445,14 +471,14 @@ function generate() {
   for (let y = Y0; y < Y0 + 4; y++) for (let x = -50; x <= -48; x++) cut(x, y, 76)
 
   // kolejne skrzydla z klasami - zamek jest gesto zabudowany
-  hall({ x1: 28, x2: 60, z1: 30, z2: 42, h: 18, axis: 'x', rise: 1, buttress: 6, storeys: 2 }) // skrzydlo transmutacji
+  hall({ x1: 28, x2: 60, z1: 30, z2: 42, h: 18, axis: 'x', rise: 1, buttress: 6, storeys: 2, classes: ['transmutacja', 'zaklecia'] }) // skrzydlo transmutacji
   for (let y = Y0; y < Y0 + 4; y++) for (let x = 42; x <= 44; x++) cut(x, y, 30)
   door1(36, 42)
-  hall({ x1: 30, x2: 56, z1: 76, z2: 90, h: 20, axis: 'x', rise: 1, buttress: 6, storeys: 2 }) // skrzydlo wschodnie
+  hall({ x1: 30, x2: 56, z1: 76, z2: 90, h: 20, axis: 'x', rise: 1, buttress: 6, storeys: 2, classes: ['obrona przed czarna magia', 'mugoloznawstwo'] }) // skrzydlo wschodnie
   for (let y = Y0; y < Y0 + 4; y++) for (let x = 42; x <= 44; x++) cut(x, y, 76)
   roundTower({ cx: 62, cz: 83, r: 5, h: 48, rise: 3, door: { x: -1, z: 0 } }) // wieza przy skrzydle wschodnim
   for (let y = Y0; y < Y0 + 3; y++) cut(56, y, 83)
-  hall({ x1: -74, x2: -42, z1: 46, z2: 58, h: 16, axis: 'x', rise: 1, buttress: 6, storeys: 2 }) // skrzydlo zachodnie
+  hall({ x1: -74, x2: -42, z1: 46, z2: 58, h: 16, axis: 'x', rise: 1, buttress: 6, storeys: 2, classes: ['historia magii', 'numerologia'] }) // skrzydlo zachodnie
   for (let y = Y0; y < Y0 + 4; y++) for (let x = -58; x <= -56; x++) cut(x, y, 58)
   door1(-66, 46)
   roundTower({ cx: -40, cz: 66, r: 4, h: 42, rise: 3, door: { x: 0, z: -1 } }) // wieza miedzy biblioteka a Wielka Sala
@@ -538,6 +564,110 @@ function generate() {
   for (const [x, z] of [[37, 45], [59, 45], [37, 57], [59, 57]]) set(x, 0, z, 'soul_lantern', { optional: true })
   for (const x of [40, 56]) for (const z of [47, 52, 56]) set(x, 7, z, 'soul_lantern', { attach: { x: 0, y: 1, z: 0 }, late: true, optional: true })
   set(60, 0, 44, 'chest', { optional: true })
+
+  // ---------- ZAMEK W JEDNOSCI: korytarze miedzy wiezami i skrzydlami ----------
+  // Korytarz: prosta sala z plaskim dachem; na koncach przebicie (3 szerokie, 4 wysokie) w sciany sasiednich budynkow.
+  function corridor(axis, a1, a2, mid) {
+    const [x1, x2, z1, z2] = axis === 'x' ? [a1, a2, mid - 2, mid + 2] : [mid - 2, mid + 2, a1, a2]
+    hall({ x1, x2, z1, z2, h: 6, axis, flat: true, buttress: 4, furnish: false })
+    for (const a of [a1 - 2, a1 - 1, a1, a2, a2 + 1, a2 + 2]) for (let d = -1; d <= 1; d++) for (let y = Y0; y < Y0 + 4; y++) axis === 'x' ? cut(a, y, mid + d) : cut(mid + d, y, a)
+  }
+  corridor('z', 43, 52, 32) // skrzydlo transmutacji - wielka okragla wieza
+  corridor('z', 21, 29, 44) // skrzydlo transmutacji - dziedziniec zegarowy
+  corridor('x', -35, -33, 66) // Wielka Sala - wieza zachodnia
+  corridor('z', 71, 75, -40) // wieza zachodnia - biblioteka
+  corridor('z', 59, 61, -43) // skrzydlo zachodnie - wieza zachodnia
+  corridor('z', 27, 45, -44) // skrzydlo zachodnie - wieza wejsciowa
+  corridor('z', 71, 75, -12) // Wielka Sala - kruzganek
+  corridor('x', 9, 29, 82) // kruzganek - skrzydlo wschodnie
+  corridor('z', 71, 75, 32) // wielka wieza - skrzydlo wschodnie
+  corridor('z', 85, 95, 20) // korytarz - wieza wrozbiarstwa
+
+  // ---------- LOCHY: schody z sali wejsciowej, korytarz z celami, pokoj wspolny Slizgonow, klasa eliksirow ----------
+  const tunnel = (x1, x2, z1, z2, h = 4) => chamber(x1, x2, z1, z2, 0, h, dungeonWall, 'polished_blackstone_bricks', 'deepslate_tiles')
+  // schody w dol w sali wejsciowej (pod scianka przy wschodniej scianie)
+  for (let k = 0; k < H; k++) {
+    const z = 25 + k
+    const y = H - 1 - k
+    for (let x = -26; x <= -24; x++) {
+      for (let yy = 0; yy < y; yy++) set(x, yy, z, 'stone_bricks')
+      set(x, y, z, 'stone_brick_stairs', { facing: { x: 0, z: -1 } })
+      for (let yy = y + 1; yy <= Math.min(y + 4, H); yy++) cut(x, yy, z)
+    }
+    for (const x of [-27, -23]) for (let yy = Math.max(0, y - 1); yy <= Math.min(y + 4, H - 1); yy++) set(x, yy, z, 'stone_bricks')
+    if (k % 2 === 0) set(-27, y + 2, z, 'soul_lantern', { attach: { x: 0, y: -1, z: 0 }, optional: true })
+  }
+  for (let z = 26; z <= 39; z++) set(-27, H, z, 'stone_brick_wall') // barierka wzdluz otworu schodow
+  tunnel(-28, -22, 41, 48) // spod schodow
+  for (let x = -26; x <= -24; x++) for (let y = 0; y <= 3; y++) cut(x, y, 41)
+  tunnel(-22, 35, 43, 49) // dlugi korytarz pod zamkiem
+  for (let z = 44; z <= 47; z++) for (let y = 0; y <= 3; y++) { cut(-22, y, z); cut(35, y, z) }
+  for (let x = -16; x <= 30; x += 8) set(x, 3, 46, 'soul_lantern', { attach: { x: 0, y: 1, z: 0 }, late: true, optional: true })
+  // cele (krata, lancuch, pajeczyna)
+  for (const cx of [-14, -6, 14, 22]) {
+    tunnel(cx - 2, cx + 2, 49, 54)
+    for (let x = cx - 1; x <= cx + 1; x++) for (let y = 0; y <= 2; y++) set(x, y, 49, 'iron_bars')
+    set(cx, 3, 52, CHAIN, { late: true, optional: true })
+    set(cx + 1, 2, 53, 'cobweb', { optional: true })
+  }
+  // pokoj wspolny Slizgonow: zielono-czarny, "okna" na jezioro, kominek, kanapy
+  chamber(-4, 10, 33, 43, 0, 6, (x, y, z) => set(x, y, z, z === 33 && y >= 2 && y <= 4 && x % 3 !== 0 ? 'green_stained_glass' : pick([['dark_prismarine', 0.6], ['prismarine_bricks', 0.4]], x, y, z)), 'polished_blackstone', 'deepslate_tiles')
+  for (let x = 2; x <= 4; x++) for (let y = 0; y <= 3; y++) cut(x, y, 43)
+  for (let x = 0; x <= 6; x++) { set(x, -1, 37, 'green_concrete'); set(x, -1, 38, 'green_concrete') }
+  for (let x = 0; x <= 6; x++) set(x, 0, 35, 'green_wool')
+  for (let x = 0; x <= 6; x++) set(x, 1, 34, 'green_wool')
+  for (let y = 0; y <= 4; y++) { set(-3, y, 37, 'bricks'); set(-3, y, 39, 'bricks') }
+  set(-3, 0, 38, 'campfire', { optional: true })
+  for (let y = 1; y <= 4; y++) set(-3, y, 38, 'bricks')
+  set(-3, 1, 38, 'air'); cut(-3, 1, 38)
+  set(3, 5, 38, CHAIN, { late: true, optional: true }); set(3, 4, 38, 'soul_lantern', { attach: { x: 0, y: 1, z: 0 }, late: true, optional: true })
+  for (const x of [-2, 9]) set(x, 0, 41, 'chest', { optional: true })
+
+  // ---------- WYSTROJ ----------
+  // zyrandol: lancuch od stropu, zlote serce, cztery ramiona z kratek i latarnie na koncach
+  const chandelier = (x, z, yFrom, chainLen = 2) => {
+    let top = yFrom
+    while (top < yFrom + 40 && !cells.has(K(x, top, z))) top++
+    if (top >= yFrom + 40) return
+    for (let k = 1; k <= chainLen; k++) set(x, top - k, z, CHAIN, { late: true, optional: true })
+    const hy = top - chainLen - 1
+    set(x, hy, z, 'gold_block', { late: true })
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      set(x + dx, hy, z + dz, 'iron_bars', { late: true, optional: true })
+      set(x + 2 * dx, hy, z + 2 * dz, 'iron_bars', { late: true, optional: true })
+      set(x + 2 * dx, hy - 1, z + 2 * dz, 'lantern', { attach: { x: 0, y: 1, z: 0 }, late: true, optional: true })
+    }
+    set(x, hy - 1, z, 'lantern', { attach: { x: 0, y: 1, z: 0 }, late: true, optional: true })
+  }
+  // sala wejsciowa (wysoka) i Wielka Sala (nad stolem nauczycieli)
+  chandelier(-30, 26, Y0 + 6, 6)
+  chandelier(-30, 34, Y0 + 6, 6)
+  chandelier(17, 61, Y0 + 6, 4)
+  // biblioteka: regaly do sufitu, galeria na pietrze z barierka, stoly do czytania ze swiecami, zyrandole
+  for (let x = -61; x <= -37; x++) {
+    for (const z of [77, 89]) for (let y = Y0 + 4; y <= Y0 + 10; y++) set(x, y, z, x % 7 === 0 ? 'chiseled_bookshelf' : 'bookshelf')
+    for (const [z, rail] of [[78, 79], [88, 87]]) { set(x, Y0 + 5, z, 'dark_oak_planks'); set(x, Y0 + 6, rail, 'dark_oak_fence') }
+  }
+  for (let x = -50; x <= -48; x++) for (let y = Y0; y < Y0 + 4; y++) cut(x, y, 77) // wejscie do biblioteki (regal je zastawial)
+  for (let y = Y0; y <= Y0 + 6; y++) set(-61, y, 79, 'ladder', { attach: { x: -1, z: 0 } })
+  cut(-61, Y0 + 6, 79)
+  for (const x of [-58, -53, -48, -43, -39]) { set(x, Y0, 83, 'dark_oak_planks'); set(x, Y0 + 1, 83, 'candle', { optional: true }) }
+  for (const x of [-54, -44]) chandelier(x, 83, Y0 + 6, 3)
+  // pokoj wspolny w wielkiej wiezy: kominek i czerwone dywany (meble dostawia bot)
+  for (let y = Y0; y <= Y0 + 5; y++) { set(37, y, 59, 'bricks'); set(37, y, 63, 'bricks') }
+  for (let y = Y0 + 1; y <= Y0 + 5; y++) set(37, y, 61, 'bricks')
+  set(37, Y0, 61, 'campfire', { optional: true }); set(37, Y0, 60, 'bricks'); set(37, Y0, 62, 'bricks')
+  // astronomia: teleskop na szczycie wiezy
+  const atTop = Y0 + 67
+  set(-6, atTop, 100, 'dark_oak_fence'); set(-6, atTop + 1, 100, 'dark_oak_fence'); set(-5, atTop + 2, 100, 'copper_block'); set(-5, atTop + 3, 100, 'copper_block'); set(-4, atTop + 3, 100, 'copper_block'); set(-6, atTop + 2, 100, 'copper_block')
+  // wrozbiarstwo: na pietrach wiezy (20,100) okragle stoliki z kulami
+  for (let y = Y0 + 7; y < Y0 + 44 - 2; y += 7) for (const [dx, dz] of [[-1, -1], [1, 1]]) { set(20 + dx, y, 100 + dz, 'dark_oak_fence'); set(20 + dx, y + 1, 100 + dz, 'tinted_glass', { optional: true }) }
+  // zielarstwo: grzadki z magicznymi roslinami w szklarniach
+  for (const [z1, z2] of [[17, 23], [29, 35]]) for (let x = -80; x <= -64; x += 2) for (let z = z1 + 1; z <= z2 - 1; z += 2) {
+    set(x, Y0, z, 'moss_block')
+    set(x, Y0 + 1, z, (x + z) % 4 === 0 ? 'flowering_azalea' : (x + z) % 4 === 2 ? 'azalea' : 'spore_blossom_dummy', { optional: true })
+  }
+  for (const c of cells.values()) if (c.block === 'spore_blossom_dummy') c.block = 'fern'
 
   // ---------- OSWIETLENIE ----------
   const hang = (x, y, z) => { if (!cells.has(K(x, y, z)) && cells.has(K(x, y + 1, z)) && cells.get(K(x, y + 1, z)).block !== 'air') set(x, y, z, 'lantern', { attach: { x: 0, y: 1, z: 0 }, late: true, optional: true }) }

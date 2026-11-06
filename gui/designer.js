@@ -878,7 +878,8 @@
     let temps = 0
     let fills = 0
     for (const y of layers) {
-      let pending = g.cells().filter(c => c.y === y && c.block !== 'air')
+      // elementy stawiane na koncu (zyrandole, wiszace latarnie) wisza na stropie - nie potrzebuja podpor od dolu
+      let pending = g.cells().filter(c => c.y === y && c.block !== 'air' && !c.late)
       // ziemia: najnizsza warstwa i wszystko do y = 0 stoi na gruncie
       let changed = true
       while (changed && pending.length) {
