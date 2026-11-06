@@ -111,6 +111,7 @@ function botEnv(p) {
   if (p.loot === 'off') env.MC_LOOT = '0'
   if (p.eatBelow) env.MC_EAT_BELOW = String(p.eatBelow)
   if (p.helperFor) env.MC_HELPER_FOR = p.helperFor // jednorazowy pomocnik: komu pomaga
+  env.MC_MODS = enabledMods().join(',') // zakladka "Mody"
   return env
 }
 
@@ -399,6 +400,15 @@ ipcMain.handle('bot:stop', (e, id) => { stopBot(id); return { ok: true } })
 ipcMain.handle('bot:command', (e, id, text) => sendCommand(id, text))
 ipcMain.handle('bot:running', () => [...procs.keys()])
 ipcMain.handle('app:version', () => app.getVersion())
+// mody botow (paczki przedmiotow i zachowania) - wlaczone sa wspolne dla wszystkich botow, dzialajace dostaja zmiane od razu
+const enabledMods = () => Array.isArray(appSettings().mods) ? appSettings().mods : []
+ipcMain.handle('mods:get', () => enabledMods())
+ipcMain.handle('mods:set', (e, ids) => {
+  const list = Array.isArray(ids) ? ids.filter(x => typeof x === 'string').slice(0, 50) : []
+  writeJson(APP_SETTINGS_FILE, { ...appSettings(), mods: list })
+  for (const { proc } of procs.values()) { try { proc.stdin.write('@@MODS ' + JSON.stringify(list) + '\n') } catch {} }
+  return { ok: true }
+})
 ipcMain.handle('app:settings', () => appSettings())
 ipcMain.handle('app:saveSettings', (e, s) => { writeJson(APP_SETTINGS_FILE, { ...appSettings(), ...s }); return { ok: true } })
 ipcMain.handle('app:dataDir', (e, id) => { const dir = id ? botDir(id) : DATA; fs.mkdirSync(dir, { recursive: true }); shell.openPath(dir); return dir })

@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('bridge', {
   // kreator budowli i wlasne komendy
   blocks: () => ipcRenderer.invoke('designer:blocks'),
   makeTeam: (fromId, count) => ipcRenderer.invoke('profiles:team', fromId, count),
+  mods: () => ipcRenderer.invoke('mods:get'),
+  setMods: ids => ipcRenderer.invoke('mods:set', ids),
   startAll: () => ipcRenderer.invoke('bot:startAll'),
   designs: () => ipcRenderer.invoke('designs:list'),
   designPlan: key => ipcRenderer.invoke('designs:plan', key),

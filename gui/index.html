@@ -23,6 +23,7 @@
       <button class="nav" data-view="ai">🤖 Asystent AI</button>
       <button class="nav" data-view="macros">⚡ Moje komendy</button>
       <button class="nav" data-view="friends">💬 Znajomi <span id="friendsDot" class="dot hidden"></span></button>
+      <button class="nav" data-view="mods">🧩 Mody</button>
       <button class="nav" data-view="commands">📜 Komendy</button>
       <button class="nav" data-view="updates">⬆ Aktualizacje <span id="updDot" class="dot hidden"></span></button>
     </nav>
@@ -317,6 +318,24 @@
     </section>
 
     <!-- KOMENDY -->
+    <!-- MODY -->
+    <section class="view" id="view-mods">
+      <h2>🧩 Mody</h2>
+      <p class="muted">To nie są prawdziwe mody do Minecrafta – nic nie instalujesz w grze. Mody dają botom nowe komendy i umiejętności.
+        Włączone działają we wszystkich botach od razu.</p>
+      <div class="card">
+        <h3>🎁 Paczki przedmiotów <span class="muted small">– bot daje przedmiot komendą /give</span></h3>
+        <p class="hint">Napisz botowi w grze <code>daj excalibur</code> (dla Ciebie), <code>daj excalibur Kopacz</code> (dla gracza albo bota)
+          albo <code>daj sobie zbroja smoka</code> (bot bierze i zakłada). Świat musi mieć włączone kody:
+          „Otwórz w sieci LAN” → <b>Zezwól na kody: TAK</b> (na serwerze bot potrzebuje OP).</p>
+        <div id="modsItems" class="mods-grid"></div>
+      </div>
+      <div class="card">
+        <h3>🧠 Umiejętności botów</h3>
+        <div id="modsBehavior" class="mods-grid"></div>
+      </div>
+    </section>
+
     <section class="view" id="view-commands">
       <input id="cmdSearch" class="search" placeholder="Szukaj komendy, np. kilof, baza, jedzenie, pomoc…">
       <div id="cmdList" class="cmd-list"></div>
@@ -428,5 +447,7 @@
   <script src="app.js"></script>
   <script src="creator.js"></script>
   <script src="friends-ui.js"></script>
+  <script src="mods.js"></script>
+  <script src="mods-ui.js"></script>
 </body>
 </html>

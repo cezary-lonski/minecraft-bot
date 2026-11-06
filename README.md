@@ -36,6 +36,7 @@ Wchodzi do gry jako osobny gracz i wykonuje polecenia wydawane **po polsku na cz
 - [Najprościej: program dla Windows](#najprościej-program-dla-windows)
 - [Skin bota](#skin-bota)
 - [Znajomi i czat](#znajomi-i-czat)
+- [Mody](#mody)
 - [Kilka botów naraz](#kilka-botów-naraz)
 - [Kreator budowli](#kreator-budowli)
 - [Asystent AI](#asystent-ai)
@@ -85,6 +86,16 @@ Wi-Fi) widzą się nawzajem — w sekcji „W sieci” kliknij **＋ Dodaj**, a 
 - Nie ma żadnego serwera: wiadomości idą prosto z komputera na komputer, nic nie przechodzi przez internet.
 - Inni widzą tylko Twój nick i to, że masz włączony launcher. Pisać można tylko ze znajomymi. **Wyłącz** — przestajesz być widoczny.
 - Za pierwszym razem Windows może zapytać o dostęp do sieci — zezwól (sieci prywatne).
+
+## Mody
+
+Zakładka **🧩 Mody** w programie. To nie są prawdziwe mody do gry – nic nie instalujesz w Minecrafcie, a włączone mody działają we wszystkich botach od razu.
+
+- **Paczki przedmiotów** (Nowe narzędzia, Legendarne zbroje, Magiczne mikstury, Uczta): napisz botowi `daj excalibur`, `daj zbroja smoka Kopacz` albo `daj sobie łuk legolasa` – bot wpisuje `/give` z nazwą i zaklęciami. Świat musi mieć włączone kody ("Otwórz w sieci LAN" → Zezwól na kody: TAK; na serwerze bot potrzebuje OP). `mody` – co jest włączone.
+- **Lepsza walka** – krytyki z wyskoku, uniki w bok, tarcza przed strzelcami.
+- **Clutche (MLG)** – przy wysokim upadku bot wylewa wodę pod siebie (albo kładzie blok szlamu/siana) i zabiera ją z powrotem. W survivalu daj mu wiadro wody.
+- **Wiedza o mobach** – creeper: uderz i odskocz; pająki w dzień spokojne; najpierw czarownice i szkielety; na blaze śnieżki.
+- **Łucznik** – z łukiem i strzałami bot strzela do mobów z daleka, z poprawką na opadanie strzały.
 
 ## Kilka botów naraz
 W zakładce **Graj** każdy bot ma własną kartę i własną pamięć świata: bazę, punkty, postawione budowle i przerwane zadanie

@@ -758,10 +758,16 @@ async function survivalTick() {
     if (warden) { escapeWarden(); return }
 
     // 4. zagrozenie od pozostalych mobow
-    const near = threats(running ? 12 : 6)
+    const near = knowThreats(threats(running ? 12 : 6))
     const threat = near.reduce((s, e) => s + DANGER[e.name], 0)
     const power = myPower()
     const closest = near[0]
+
+    // lucznik: moby dalej (do 20 blokow) dostaja strzala, zanim podejda
+    if (!closest && canShoot() && bot.health > 6) {
+      const far = knowThreats(threats(20)).find(e => !['warden', 'wither', 'ender_dragon'].includes(e.name) && bot.entity.position.distanceTo(e.position) > 5)
+      if (far && await mobKnowledge(far, far.position.distanceTo(bot.entity.position), power)) return
+    }
 
     if (!closest) {
       if (mode === 'flee' || mode === 'fight') {
@@ -777,6 +783,8 @@ async function survivalTick() {
     const dist = closest.position.distanceTo(bot.entity.position)
     const mustFlee = near.some(e => ALWAYS_FLEE.includes(e.name) && e.position.distanceTo(bot.entity.position) < (e.name === 'creeper' ? 6 : 16))
     const lowHp = bot.health <= 6
+    // mody: wiedza o mobach (creeper - uderz i odskocz, blaze - sniezki) i lucznik (strzal z daleka)
+    if (!lowHp && !near.some(e => ['warden', 'wither', 'ender_dragon', 'elder_guardian', 'ravager'].includes(e.name)) && await mobKnowledge(closest, dist, power)) return
 
     if (mustFlee || lowHp || threat > power) {
       if (!mustFlee || closest.name !== 'warden') askForFightHelp()
@@ -810,6 +818,203 @@ async function eatIfLow() {
 }
 
 setInterval(survivalTick, 400)
+
+// ---------- MODY (zakladka "Mody" w programie) ----------
+// Nie prawdziwe mody do gry: paczki przedmiotow ("daj excalibur" -> /give) i nowe zachowania botow.
+// Lista wlaczonych przychodzi przy starcie (MC_MODS) i na zywo z programu ("@@MODS [...]").
+const ModsLib = require('./gui/mods.js')
+let MODS = new Set((process.env.MC_MODS || '').split(',').filter(Boolean))
+const modOn = id => MODS.has(id)
+const RANGED = ['skeleton', 'stray', 'bogged', 'pillager', 'blaze', 'witch', 'drowned']
+
+// "daj excalibur [nick]", "daj sobie zbroja smoka" - bot wpisuje /give (wymaga wlaczonych kodow w swiecie)
+async function giveModItem(user, found) {
+  const { mod, def, rest } = found
+  if (!modOn(mod.id)) { say(`To jest z modu "${mod.name}" - wlacz go w programie (zakladka Mody).`); return }
+  const self = /^(sobie|siebie|dla siebie)$/.test(rest)
+  const nick = self ? bot.username
+    : rest && !/^(mi|mnie)$/.test(rest) ? (Object.keys(bot.players).find(n => n.toLowerCase() === rest || n.toLowerCase().startsWith(rest)) || rest)
+      : (user || process.env.MC_PLAYER || bot.username)
+  const v = bot.registry.version
+  const fmt = v['>=']('1.21.5') ? 'snbt' : v['>=']('1.20.5') ? 'json' : 'nbt'
+  // brak uprawnien do komend: serwer odpisuje bledem - wtedy podpowiadamy, co wlaczyc
+  let denied = false
+  const onMsg = m => { if (/permission|uprawnie|unknown or incomplete|nieznan|niekompletn|incorrect argument|nie masz/i.test(String(m))) denied = true }
+  bot.on('messagestr', onMsg)
+  try {
+    for (const c of ModsLib.giveCommands(def, nick, fmt)) { bot.chat(c); await sleep(400) }
+    await sleep(1200)
+  } finally { bot.removeListener('messagestr', onMsg) }
+  if (denied) { say('Gra nie pozwala mi na /give. Otworz swiat w LAN z "Zezwol na kody: TAK" (albo daj mi OP na serwerze).'); return }
+  const label = def.name || def.key
+  say(nick === bot.username ? `Mam ${label}!` : `${label} dla ${nick}!`)
+  // dla siebie: od razu zakladamy / bierzemy do reki
+  if (nick === bot.username) {
+    await sleep(500)
+    for (const d of def.parts || [def]) {
+      const it = bot.inventory.items().find(i => i.name === d.item)
+      if (!it) continue
+      const dest = /_helmet$/.test(d.item) ? 'head' : /_chestplate$|^elytra$/.test(d.item) ? 'torso' : /_leggings$/.test(d.item) ? 'legs' : /_boots$/.test(d.item) ? 'feet' : d.item === 'shield' ? 'off-hand' : 'hand'
+      try { await bot.equip(it, dest) } catch {}
+    }
+  }
+}
+
+// LEPSZA WALKA: krytyk (bot podskakuje tuz przed ciosem, uderza w opadaniu), uniki w bok, tarcza przed strzelcami
+let strafing = false
+let strafeDir = 1
+let strafeAt = 0
+let shieldUp = false
+let critJump = false
+bot.on('physicsTick', () => {
+  if (!bot.entity) return
+  const t = bot.pvp?.target
+  const on = modOn('walka') && t && t.isValid !== false && !escaping
+  if (!on) {
+    if (strafing) { bot.setControlState('left', false); bot.setControlState('right', false); strafing = false }
+    if (shieldUp) { bot.deactivateItem(); shieldUp = false }
+    if (critJump) { bot.setControlState('jump', false); critJump = false }
+    return
+  }
+  const d = t.position.distanceTo(bot.entity.position)
+  const ticks = bot.pvp.timeToNextAttack
+  // skaczemy sami tylko do krytyka (skoki pathfindera - np. na stopien - zostawiamy w spokoju)
+  if (d < 3.6 && bot.entity.onGround && ticks >= 4 && ticks <= 7) { bot.setControlState('jump', true); critJump = true }
+  else if (critJump) { bot.setControlState('jump', false); critJump = false }
+  if (d < 5) {
+    if (Date.now() - strafeAt > 700 + Math.random() * 500) { strafeAt = Date.now(); strafeDir = -strafeDir }
+    bot.setControlState(strafeDir > 0 ? 'left' : 'right', true)
+    bot.setControlState(strafeDir > 0 ? 'right' : 'left', false)
+    strafing = true
+  } else if (strafing) { bot.setControlState('left', false); bot.setControlState('right', false); strafing = false }
+  // tarcza w drugiej rece: zaslaniamy sie przed strzelcem, gdy jest dalej niz na cios
+  const shield = bot.inventory.slots[45]?.name === 'shield'
+  const wantShield = shield && RANGED.includes(t.name) && d > 3.6
+  if (wantShield && !shieldUp) { bot.activateItem(true); shieldUp = true } else if (!wantShield && shieldUp) { bot.deactivateItem(); shieldUp = false }
+})
+
+// CLUTCHE (MLG): przy wysokim upadku w ostatniej chwili woda pod nogi (i zabranie jej), bez wiadra - blok szlamu/siana
+let fallStartY = null
+let clutch = null // null | 'gotowy' | 'zrobiony'
+bot.on('physicsTick', () => {
+  const e = bot.entity
+  if (!e || !mcData) return
+  if (!modOn('clutch') || isCreative() || e.isInWater || onClimbable() || e.onGround || e.velocity.y > -0.15) {
+    if (e?.onGround || e?.isInWater) { if (clutch === 'zrobiony') pickUpClutch(); fallStartY = null; if (clutch === 'gotowy') clutch = null }
+    return
+  }
+  if (fallStartY === null) fallStartY = e.position.y
+  let groundY = null
+  for (let dy = 1; dy <= 40; dy++) {
+    const b = bot.blockAt(e.position.offset(0, -dy, 0))
+    if (!b) return
+    if (/water|lava/.test(b.name)) return // woda pod nami - nic nie trzeba
+    if (b.boundingBox === 'block') { groundY = b.position.y; break }
+  }
+  if (groundY === null) return
+  const fall = fallStartY - (groundY + 1)
+  const above = e.position.y - (groundY + 1)
+  if (fall < 4 && above < 4) return
+  const water = bot.inventory.items().find(i => i.name === 'water_bucket')
+  const pad = bot.inventory.items().find(i => /^(slime_block|hay_block)$/.test(i.name))
+  if (!water && !pad) return
+  // 1) zawczasu: w reke wiadro (albo blok) i patrzymy w dol
+  if (!clutch) {
+    clutch = 'gotowy'
+    bot.equip(water || pad, 'hand').catch(() => {})
+    bot.look(e.yaw, -Math.PI / 2).catch(() => {})
+    return
+  }
+  // 2) ziemia w zasiegu reki (od oczu): wylewamy wode / kladziemy blok
+  if (clutch === 'gotowy' && above + 1.62 <= 4.3 && above > 0.3) {
+    clutch = 'zrobiony'
+    if (bot.heldItem?.name === 'water_bucket') bot.activateItem()
+    else {
+      const ground = bot.blockAt(new Vec3(Math.floor(e.position.x), groundY, Math.floor(e.position.z)))
+      if (ground) bot._placeBlockWithOptions(ground, new Vec3(0, 1, 0), { forceLook: 'ignore', swingArm: 'right' }).catch(() => {})
+    }
+    console.log(`[bot] clutch! (upadek z ${Math.round(fall)} blokow)`)
+  }
+})
+async function pickUpClutch() {
+  clutch = null
+  await sleep(300)
+  const bucket = bot.inventory.items().find(i => i.name === 'bucket')
+  const w = bot.findBlock({ matching: b => b.name === 'water' && b.metadata === 0, maxDistance: 3 })
+  if (!bucket || !w) return
+  try {
+    await bot.equip(bucket, 'hand')
+    await bot.lookAt(w.position.offset(0.5, 0.5, 0.5))
+    bot.activateItem()
+    if (Date.now() - (pickUpClutch.said || 0) > 30000) { pickUpClutch.said = Date.now(); say('Clutch!') }
+  } catch {}
+}
+
+// LUCZNIK: strzal z luku z poprawka na opadanie strzaly (ok. 0.003 * odleglosc^2 bloku)
+async function shootAt(ent) {
+  const bow = bot.inventory.items().find(i => i.name === 'bow')
+  if (!bow || (!isCreative() && !bot.inventory.items().some(i => /arrow$/.test(i.name)))) return false
+  bot.pvp.stop()
+  await bot.equip(bow, 'hand')
+  bot.activateItem()
+  await sleep(1100) // pelne naciagniecie
+  if (!ent.isValid && ent.isValid !== undefined) { bot.deactivateItem(); return true }
+  const d = ent.position.distanceTo(bot.entity.position)
+  await bot.lookAt(ent.position.offset(0, (ent.height || 1.8) * 0.6 + 0.003 * d * d, 0))
+  bot.deactivateItem()
+  return true
+}
+const canShoot = () => modOn('lucznik') && bot.inventory.items().some(i => i.name === 'bow') && (isCreative() || bot.inventory.items().some(i => /arrow$/.test(i.name)))
+
+// WIEDZA O MOBACH: co robic z konkretnym mobem (wywolywane z instynktu; true = zalatwione)
+async function mobKnowledge(closest, dist, power) {
+  if (!modOn('wiedza') && !modOn('lucznik')) return false
+  // lucznik: z daleka strzelamy (tez do creepera), z bliska walczymy normalnie
+  if (canShoot() && dist > 5 && dist < 26 && closest.name !== 'enderman') {
+    setMode('fight', closest.name === 'creeper' ? 'Creeper! Strzelam z daleka.' : null)
+    await shootAt(closest)
+    return true
+  }
+  if (!modOn('wiedza')) return false
+  // creeper: uderz i odskocz (odrzut), zanim zdazy wybuchnac; za blisko - odskok
+  if (closest.name === 'creeper' && power >= 5) {
+    setMode('fight', 'Creeper - uderzam i odskakuje.')
+    await bestSword()
+    if (dist < 2.2) {
+      bot.setControlState('back', true); bot.setControlState('sprint', true); await sleep(500)
+    } else if (dist < 3.4) {
+      await bot.lookAt(closest.position.offset(0, 1.2, 0), true)
+      bot.attack(closest)
+      bot.setControlState('back', true); await sleep(700)
+    } else {
+      bot.pathfinder.setGoal(new goals.GoalFollow(closest, 2.8), true)
+      await sleep(300)
+    }
+    bot.setControlState('back', false); bot.setControlState('sprint', false)
+    return true
+  }
+  // blaze: sniezki (zadaja mu obrazenia z daleka)
+  if (closest.name === 'blaze' && dist < 16) {
+    const snow = bot.inventory.items().find(i => i.name === 'snowball')
+    if (snow) {
+      setMode('fight', 'Blaze - rzucam sniezkami!')
+      await bot.equip(snow, 'hand')
+      await bot.lookAt(closest.position.offset(0, 1 + 0.006 * dist * dist, 0))
+      bot.activateItem()
+      return true
+    }
+  }
+  return false
+}
+// wiedza o mobach: kogo w ogole uwazac za zagrozenie i kogo bic najpierw
+function knowThreats(list) {
+  if (!modOn('wiedza')) return list
+  const day = bot.time && bot.time.timeOfDay < 12500
+  const PRIORITY = { witch: 4, creeper: 3, skeleton: 2, stray: 2, bogged: 2, pillager: 2, blaze: 2 }
+  return list
+    .filter(e => !(day && /spider/.test(e.name) && e.position.distanceTo(bot.entity.position) > 2.5)) // pajak w dzien nie atakuje pierwszy
+    .sort((a, b) => (a.position.distanceTo(bot.entity.position) - (PRIORITY[a.name] || 0) * 2) - (b.position.distanceTo(bot.entity.position) - (PRIORITY[b.name] || 0) * 2))
+}
 
 // ---------- odblokowanie: bot wbity w blok albo zaklinowany ----------
 // pozycje stawianych wlasnie blokow budowli - tych przy odblokowywaniu nie kopiemy
@@ -1266,6 +1471,7 @@ const HELP = [
   'Budowa (z wystrojem): zburz <budowla>, usun obszar <x y z|nick> <x y z|nick>, rozbierz rusztowania, buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
+  'Mody (zakladka Mody w programie): daj <przedmiot z modu> [nick|sobie], np. daj excalibur, daj sobie zbroja smoka; mody - co jest wlaczone',
   'Zespol: pomoz [bot], pomoc <kto> <komu> (np. pomoc Kopacz Claude), pomocnik [nick] (jednorazowy bot do pomocy), popros <bot> o <co> [ile], zabij <gracz|mob|imie>',
   'Po bledzie (np. zabraklo blokow): daj mu brakujace rzeczy i napisz kontynuuj. Ile do konca budowy: czas',
   'Wlasne: projekty, buduj <projekt>, moje komendy, naucz sie <nazwa>: krok; krok, zapomnij komende <nazwa>',
@@ -4857,6 +5063,7 @@ process.stdin.on('data', d => {
   stdinBuf = lines.pop()
   for (const line of lines) {
     if (line.startsWith('@@TEAM ')) { try { handleTeam(JSON.parse(line.slice(7))) } catch {} continue }
+    if (line.startsWith('@@MODS ')) { try { MODS = new Set(JSON.parse(line.slice(7))); console.log('[bot] mody:', [...MODS].join(', ') || 'brak') } catch {} continue }
     if (line.startsWith('@@AIREPLY ')) { try { aiReply(JSON.parse(line.slice(10))) } catch {} continue }
     if (line.startsWith('@@AICMD ')) { try { runAiCommand(JSON.parse(line.slice(8))) } catch {} continue }
     if (line.trim()) handle(null, line)
@@ -5096,7 +5303,18 @@ function handleCommand(user, msg, whisper = false) {
   const haveQ = c.match(/^(?:czy masz|masz|ile masz)\s+(.+)$/)
   if (haveQ) return haveCommand(haveQ[1])
   if (c === 'jedz') return eatNow()
-  if (verb === 'daj' && args.length) { const { word, amount } = splitAmount(args.join(' ')); return giveItems(player, word, amount) }
+  if (verb === 'daj' && args.length) {
+    // przedmiot z modu ("daj excalibur", "daj sobie zbroja smoka", "daj luk legolasa Kopacz")
+    const self = /^(sobie|siebie) /.test(args.join(' '))
+    const mod = ModsLib.findItem(self ? args.slice(1).join(' ') : args.join(' '))
+    if (mod) return giveModItem(user, self ? { ...mod, rest: 'sobie' } : mod)
+    const { word, amount } = splitAmount(args.join(' ')); return giveItems(player, word, amount)
+  }
+  if (c === 'mody' || c === 'moje mody') {
+    const on = ModsLib.MODS.filter(m => MODS.has(m.id))
+    say(on.length ? 'Wlaczone mody: ' + on.map(m => m.items ? `${m.name} (daj ${m.items.map(i => i.key).join(', ')})` : m.name).join('; ') : 'Nie mam wlaczonych modow - wlacz je w programie (zakladka Mody).')
+    return
+  }
   if (verb === 'wez' && args.length) { const { word, amount } = splitAmount(args.join(' ')); return withdrawCommand(word, amount) }
   if (verb === 'schowaj') return depositCommand(args.join(' ') || null)
   if (verb === 'wyrzuc' && args.length) { const { word, amount } = splitAmount(args.join(' ')); return tossCommand(word, amount) }

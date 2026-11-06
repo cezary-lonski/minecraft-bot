@@ -73,6 +73,8 @@ window.COMMANDS = [
   { cat: 'Zespół', cmd: 'pomoz <bot>', desc: 'Pomaga konkretnemu botowi' },
   { cat: 'Zespół', cmd: 'pomoc <kto> <komu>', desc: 'Na czacie gry: np. pomoc Kopacz Claude – Kopacz dołącza do pracy Claude, inne boty to ignorują' },
   { cat: 'Zespół', cmd: 'pomocnik [nick]', desc: 'Program wpuszcza do gry jednorazowego bota (Pomocnik1, 2…), który pomaga temu graczowi albo botowi: buduje z nim, zdobywa to samo i oddaje zdobycz albo go pilnuje w walce; potem sam wychodzi. Bez nicku – pomaga Tobie' },
+  { cat: 'Mody', cmd: 'daj <przedmiot z modu> [nick|sobie]', desc: 'Z włączonej paczki w zakładce Mody, np. daj excalibur, daj zbroja smoka Kopacz, daj sobie łuk legolasa (bot wpisuje /give – świat musi mieć włączone kody)' },
+  { cat: 'Mody', cmd: 'mody', desc: 'Bot mówi, które mody są włączone i jakie przedmioty może dać' },
   { cat: 'Zespół', cmd: 'popros <bot> o <co> <ile>', desc: 'Prosi innego bota o przedmioty – przyniesie je' },
   // AI w grze (wlaczane w ustawieniach bota)
   { cat: 'AI w grze', cmd: 'ai <pytanie>', desc: 'Pytanie do AI na czacie gry, np. ai jak pokonać smoka?' },
