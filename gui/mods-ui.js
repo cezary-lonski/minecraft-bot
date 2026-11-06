@@ -44,4 +44,13 @@ for (const id of ['modsBuildings', 'modsItems', 'modsBehavior']) {
   })
 }
 
+// postacie Hogwartu jako boty
+/* global selected */
+$('npcCreate').addEventListener('click', async () => {
+  const r = await B.createNpc(selected)
+  if (!r.ok) { toast(r.error, 'err'); return }
+  if (r.added.length) toast(`Dodano: ${r.added.join(', ')} – uruchom je w zakładce Graj`, 'ok')
+  else toast(`Już są: ${r.skipped.join(', ')}`, 'ok')
+})
+
 loadMods()

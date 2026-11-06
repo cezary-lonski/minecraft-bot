@@ -112,6 +112,7 @@ function botEnv(p) {
   if (p.eatBelow) env.MC_EAT_BELOW = String(p.eatBelow)
   if (p.helperFor) env.MC_HELPER_FOR = p.helperFor // jednorazowy pomocnik: komu pomaga
   env.MC_MODS = enabledMods().join(',') // zakladka "Mody"
+  if (p.npc && NPC.ROLES[p.npc]) { env.MC_NPC = p.npc; env.MC_NPC_POST = NPC.ROLES[p.npc].post.join(',') } // postac Hogwartu
   return env
 }
 
@@ -346,6 +347,33 @@ ipcMain.handle('profiles:save', (e, p) => {
   saveProfiles([...list, { ...BOT_DEFAULTS, ...p, id, created: Date.now() }])
   return { ok: true, id }
 })
+// postacie Hogwartu jako boty: Snape, McGonagall, Dumbledore - ze skinem, miejscem w zamku i rola dla AI.
+// Nick dobieramy tak, zeby jego domyslny skin nie byl zajety przez innego bota (pakiet skinow podmienia skin "po slocie").
+const NPC = require('./npc.js')
+ipcMain.handle('npc:create', (e, fromId) => {
+  const list = loadProfiles()
+  const base = list.find(x => x.id === fromId) || list[0]
+  if (!base) return { ok: false, error: 'Najpierw dodaj zwyklego bota (z ustawieniami świata) – postacie skopiują jego ustawienia.' }
+  const slotKey = n => JSON.stringify(defaultSkinSlot(n))
+  const used = new Set(list.map(x => slotKey(x.name)))
+  if (base.player) used.add(slotKey(base.player))
+  const added = []
+  const skipped = []
+  for (const [role, R] of Object.entries(NPC.ROLES)) {
+    if (list.some(x => x.npc === role)) { skipped.push(R.title); continue }
+    const name = R.names.find(n => !used.has(slotKey(n)) && !list.some(x => x.name.toLowerCase() === n.toLowerCase())) || R.names[0]
+    used.add(slotKey(name))
+    const p = { ...base, id: newId(), name, npc: role, autoHelp: false, created: Date.now(), lastPlayed: 0 }
+    fs.mkdirSync(botDir(p.id), { recursive: true })
+    fs.writeFileSync(skinFile(p.id), NPC.SKINS[role]())
+    list.push(p)
+    added.push(`${R.title} (${name})`)
+  }
+  saveProfiles(list)
+  rebuildSkinPack()
+  return { ok: true, added, skipped }
+})
+
 // druzyna: kopie wybranego bota (ten sam swiat i ustawienia) z kolejnymi numerami w nicku, np. Kopacz1..Kopacz6
 ipcMain.handle('profiles:team', (e, fromId, count) => {
   const list = loadProfiles()
@@ -600,7 +628,7 @@ async function handleAiRequest(id, req) {
   const entry = procs.get(id)
   if (!p || !entry) return
   send('log', { id, kind: 'gui', text: `🤖 AI: ${req.from}: ${req.text}` })
-  const res = await assistant.chat(req.text, { conv: 'bot:' + id, botId: id, inGame: true, botName: p.name, player: req.from })
+  const res = await assistant.chat(req.text, { conv: 'bot:' + id, botId: id, inGame: true, botName: p.name, player: req.from, persona: NPC.ROLES[p.npc]?.persona })
   const text = res.ok ? res.text : 'AI: ' + res.error
   send('log', { id, kind: 'gui', text: `🤖 AI → ${text}` })
   if (procs.get(id) === entry) entry.proc.stdin.write('@@AIREPLY ' + JSON.stringify({ id: req.id, text }) + '\n')

@@ -69,7 +69,8 @@ Po utworzeniu budowli lub komendy powiedz krótko, co zrobiłeś i jak tego uży
 // dopisek, gdy rozmowa toczy sie na czacie gry
 const IN_GAME = ctx => `
 
-TERAZ JESTEŚ W GRZE: nazywasz się ${ctx.botName} i jesteś botem w Minecrafcie. Piszesz na czacie gry z graczem ${ctx.player || '(gracz)'}.
+TERAZ JESTEŚ W GRZE: nazywasz się ${ctx.botName} i jesteś botem w Minecrafcie. Piszesz na czacie gry z graczem ${ctx.player || '(gracz)'}.${ctx.persona ? `
+- TWOJA ROLA: ${ctx.persona} Odpowiadaj zawsze jako ta postać (po polsku), ale komendy bota wykonuj normalnie.` : ''}
 - Odpowiadaj bardzo krótko: 1-2 zdania, najwyżej 200 znaków. Bez markdown, bez backticków, bez list i emoji.
 - Gdy gracz prosi, żebyś coś zrobił, zrób to sam narzędziem run_bot_command (bez parametru bot - polecenie trafi do Ciebie)
   zamiast tłumaczyć komendy. Długie zadania (zdobywanie, budowa) uruchom i krótko powiedz, że się za to bierzesz.

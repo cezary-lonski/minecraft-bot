@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('bridge', {
   blocks: () => ipcRenderer.invoke('designer:blocks'),
   makeTeam: (fromId, count) => ipcRenderer.invoke('profiles:team', fromId, count),
   mods: () => ipcRenderer.invoke('mods:get'),
+  createNpc: fromId => ipcRenderer.invoke('npc:create', fromId),
   setMods: ids => ipcRenderer.invoke('mods:set', ids),
   startAll: () => ipcRenderer.invoke('bot:startAll'),
   designs: () => ipcRenderer.invoke('designs:list'),

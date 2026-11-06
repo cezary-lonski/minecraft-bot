@@ -1053,6 +1053,80 @@ async function castSpell(ent, kind) {
   if (S[kind]) await runGameCommands(S[kind], `czar dla ${who}`, true)
 }
 
+// ---------- POSTACIE HOGWARTU ----------
+const NpcLib = require('./gui/npc.js')
+// gdzie stoi wielki hogwart: w pamieci tego bota albo ktoregos z kolegow (foldery botow leza obok siebie)
+function findHogwart() {
+  const lists = [builds]
+  try {
+    const parent = pathLib.dirname(DATA_DIR)
+    for (const d of fs.readdirSync(parent)) { try { lists.push(JSON.parse(fs.readFileSync(pathLib.join(parent, d, 'builds.json'), 'utf8'))) } catch {} }
+  } catch {}
+  const all = lists.flat().filter(r => r && r.type === 'wielki hogwart' && (!r.dim || !bot.game?.dimension || r.dim === bot.game.dimension))
+  all.sort((a, b) => (b.at || 0) - (a.at || 0))
+  return all[0] ? { origin: new Vec3(all[0].origin.x, all[0].origin.y, all[0].origin.z), front: all[0].front } : null
+}
+
+// bot-postac (Snape, McGonagall, Dumbledore): idzie na swoje miejsce w zamku, wraca tam po zadaniach i wita uczniow
+const NPC_ROLE = process.env.MC_NPC || ''
+const NPC = NpcLib.ROLES[NPC_ROLE]
+function npcPost() {
+  const wp = findWaypoint('posterunek')
+  if (wp) return new Vec3(wp.x, wp.y, wp.z)
+  const h = findHogwart()
+  if (!h || !NPC) return null
+  const [x, y, z] = NPC.post
+  return toWorld(h.origin, h.front, x, y, z)
+}
+async function npcGoToPost(quiet) {
+  const post = npcPost()
+  if (!post) { if (!quiet) say(`Nie wiem, gdzie jest wielki hogwart. Zbudujcie go albo postaw mnie na miejscu i napisz "ustaw posterunek".`); return }
+  if (bot.entity.position.distanceTo(post.offset(0.5, 0, 0.5)) < 3) return
+  setStatus(`ide na swoje miejsce: ${NPC.place}`)
+  if (isCreative() && await creativeFlyTo(post)) { bot.creative.stopFlying(); return }
+  try { await gotoSafe(new goals.GoalNear(post.x, post.y, post.z, 1), 300000) } catch (e) { console.log('[bot] postac:', e.message) }
+}
+if (NPC) {
+  bot.once('spawn', () => setTimeout(() => { if (!running) task(`ide na swoje miejsce (${NPC.place})`, () => npcGoToPost()) }, 6000))
+  // po zadaniach wracamy na miejsce
+  setInterval(() => {
+    if (!bot.entity || running || activeTasks > 0 || mode !== 'normal') return
+    const post = npcPost()
+    if (post && bot.entity.position.distanceTo(post.offset(0.5, 0, 0.5)) > 6) task(`wracam na swoje miejsce (${NPC.place})`, () => npcGoToPost(true))
+  }, 30000)
+  // powitania: patrzymy na ucznia obok, co jakis czas cos mowimy
+  const greeted = new Map()
+  setInterval(() => {
+    if (!bot.entity || running) return
+    const mates = new Set(teammates().map(t => t.from))
+    const p = Object.values(bot.players).filter(pl => pl.entity && pl.username !== bot.username && !mates.has(pl.username))
+      .map(pl => ({ pl, d: pl.entity.position.distanceTo(bot.entity.position) })).filter(x => x.d < 7).sort((a, b) => a.d - b.d)[0]
+    if (!p) return
+    bot.lookAt(p.pl.entity.position.offset(0, 1.6, 0)).catch(() => {})
+    if (Date.now() - (greeted.get(p.pl.username) || 0) > 120000) {
+      greeted.set(p.pl.username, Date.now())
+      say(pick(NPC.greet))
+    }
+  }, 1500)
+}
+
+// reszta postaci jako wiesniacy z imieniem, w swoich miejscach w wielkim hogwarcie ("postacie hogwart" / "usun postacie")
+async function summonHogwartFolk(user, remove) {
+  if (remove) { await runGameCommands(['/kill @e[tag=hogwart]'], 'usuwam postacie Hogwartu'); return }
+  const h = findHogwart()
+  if (!h) { say('Nie widze wielkiego hogwartu w pamieci botow - najpierw "buduj wielki hogwart".'); return }
+  const v = bot.registry.version
+  const snbt = v['>=']('1.21.5')
+  const nameTag = (text, color) => snbt ? `{text:"${text}",color:"${color}"}` : `'${JSON.stringify({ text, color })}'`
+  const cmds = NpcLib.VILLAGERS.map(([name, color, prof, x, y, z]) => {
+    const w = toWorld(h.origin, h.front, x, y, z)
+    return `/summon villager ${w.x + 0.5} ${w.y} ${w.z + 0.5} {CustomName:${nameTag(name, color)},CustomNameVisible:1b,NoAI:1b,Invulnerable:1b,PersistenceRequired:1b,Silent:1b,Tags:["hogwart"],VillagerData:{profession:"minecraft:${prof}",level:5,type:"minecraft:plains"}}`
+  })
+  const cat = toWorld(h.origin, h.front, -29, 16, 31)
+  cmds.push(`/summon cat ${cat.x + 0.5} ${cat.y} ${cat.z + 0.5} {CustomName:${nameTag('Pani Norris', 'gray')},CustomNameVisible:1b,NoAI:1b,Invulnerable:1b,PersistenceRequired:1b,Tags:["hogwart"]}`)
+  if (await runGameCommands(['/kill @e[tag=hogwart]', ...cmds], 'przywoluje postacie Hogwartu jako wiesniakow')) say(`Postacie Hogwartu sa na miejscach (${NpcLib.VILLAGERS.length} + kot Pani Norris). "usun postacie" - znikna.`)
+}
+
 // WIEDZA O MOBACH: co robic z konkretnym mobem (wywolywane z instynktu; true = zalatwione)
 async function mobKnowledge(closest, dist, power) {
   if (!modOn('wiedza') && !modOn('lucznik')) return false
@@ -5418,6 +5492,10 @@ function handleCommand(user, msg, whisper = false) {
     if (mod) return giveModItem(user, self ? { ...mod, rest: 'sobie' } : mod)
     const { word, amount } = splitAmount(args.join(' ')); return giveItems(player, word, amount)
   }
+  // postacie Hogwartu: wiesniacy z imionami; bot-postac: jego stale miejsce
+  if (/^(postacie hogwart\w*|przywolaj postacie|postacie|npc hogwart\w*)$/.test(c)) return summonHogwartFolk(user, false)
+  if (/^(usun|zabierz) postacie$/.test(c)) return summonHogwartFolk(user, true)
+  if (/^(ustaw posterunek|tu jest twoje miejsce|tu stoj zawsze)$/.test(c)) { saveWaypoint('posterunek'); say('To moje stale miejsce - tu bede wracal.'); return }
   // zgoda na komendy gry (/give, czary): "komendy zawsze" / "komendy nie" / "komendy pytaj"
   const perm = c.match(/^komendy (zawsze|nie|pytaj)$/)
   if (perm) {
