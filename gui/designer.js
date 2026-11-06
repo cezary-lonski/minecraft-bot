@@ -870,7 +870,7 @@
   function addSupports(g, warnings) {
     const cells = g.cells().filter(c => c.block !== 'air')
     if (!cells.length) return
-    const minY = Math.min(...cells.map(c => c.y))
+    const minY = cells.reduce((m, c) => Math.min(m, c.y), Infinity)
     const placed = new Set()
     const key = (x, y, z) => x + ',' + y + ',' + z
     const solid = c => c && c.block !== 'air' && !c.temp
@@ -940,6 +940,20 @@
       rooms.push(...c.rooms)
       if (g.m.size > LIMIT) { warnings.push('Budowla jest za duza - ucialem reszte.'); break }
     }
+    return finish(g, warnings, rooms)
+  }
+
+  // gotowe komorki (np. z generatora w tools/) -> plan jak z generate: bez nieznanych blokow, z podporami
+  function fromCells(list, rooms = []) {
+    const g = new Grid()
+    for (const c of list) {
+      const { x, y, z, block, ...extra } = c
+      g.set(x, y, z, block, extra)
+    }
+    return finish(g, [], rooms)
+  }
+
+  function finish(g, warnings, rooms) {
     // nieznane bloki zamieniamy na kamienne cegly
     const bad = new Set()
     for (const c of g.cells()) if (c.block !== 'air' && !valid(c.block)) { bad.add(c.block); c.block = 'stone_bricks' }
@@ -948,12 +962,14 @@
     addSupports(g, warnings)
     const cells = g.cells()
     const solid = cells.filter(c => c.block !== 'air')
-    const xs = solid.map(c => c.x)
-    const ys = solid.map(c => c.y)
-    const zs = solid.map(c => c.z)
-    const bounds = solid.length
-      ? { x1: Math.min(...xs), x2: Math.max(...xs), y1: Math.min(...ys), y2: Math.max(...ys), z1: Math.min(...zs), z2: Math.max(...zs) }
-      : { x1: 0, x2: 0, y1: 0, y2: 0, z1: 0, z2: 0 }
+    // bez Math.min(...tablica) - przy setkach tysiecy blokow przepelnia stos
+    const bounds = { x1: Infinity, x2: -Infinity, y1: Infinity, y2: -Infinity, z1: Infinity, z2: -Infinity }
+    for (const c of solid) {
+      if (c.x < bounds.x1) bounds.x1 = c.x; if (c.x > bounds.x2) bounds.x2 = c.x
+      if (c.y < bounds.y1) bounds.y1 = c.y; if (c.y > bounds.y2) bounds.y2 = c.y
+      if (c.z < bounds.z1) bounds.z1 = c.z; if (c.z > bounds.z2) bounds.z2 = c.z
+    }
+    if (!solid.length) Object.assign(bounds, { x1: 0, x2: 0, y1: 0, y2: 0, z1: 0, z2: 0 })
     return {
       cells,
       rooms,
@@ -1358,5 +1374,5 @@
     'kamienny most 5 na 25 z latarniami'
   ]
 
-  return { generate, parse, setBlocks, mat, materialsOf, blockColor, isGlass, isThin, isEasy, shade, EXAMPLES, PARTS: Object.keys(PARTS), PL_TYPE, PL_ROOF, strip }
+  return { generate, fromCells, parse, setBlocks, mat, materialsOf, blockColor, isGlass, isThin, isEasy, shade, EXAMPLES, PARTS: Object.keys(PARTS), PL_TYPE, PL_ROOF, strip }
 })

@@ -55,7 +55,23 @@
           <p class="muted">Kliknij dwa razy, żeby uruchomić bota i przejść do jego panelu. Każdy bot pamięta swój świat:
             bazę, punkty, budowle i ostatnie zadanie. Możesz uruchomić kilka naraz – będą sobie pomagać.</p>
         </div>
-        <button id="btnStopAll" class="btn ghost hidden">⏹ Zatrzymaj wszystkie</button>
+        <div class="row team-btns">
+          <button id="btnTeam" class="btn ghost" title="Kopie wybranego bota (ten sam świat) – do wspólnej budowy dużych budowli">👥 Dodaj drużynę</button>
+          <button id="btnStartAll" class="btn">▶ Uruchom wszystkie</button>
+          <button id="btnStopAll" class="btn ghost hidden">⏹ Zatrzymaj wszystkie</button>
+        </div>
+      </div>
+      <div id="teamBox" class="card team-box hidden">
+        <b>Drużyna do budowy</b> – kopie bota <b id="teamFrom">?</b> (ten sam świat i ustawienia), nicki z numerami.
+        <div class="row">
+          <label>Ile botów <input id="teamCount" type="number" min="1" max="50" value="6"></label>
+          <button id="teamAdd" class="btn primary small">Dodaj</button>
+          <button id="teamCancel" class="btn ghost small">Anuluj</button>
+        </div>
+        <p class="hint">Świat otwarty przez „Otwórz w sieci LAN” wpuszcza najwyżej <b>8 graczy</b> (Ty + 7 botów). Więcej botów
+          – tylko na serwerze (np. własny serwer Minecraft na tym komputerze z <code>max-players</code> większym w server.properties).
+          Każdy bot to osobny program (ok. 100–150 MB pamięci). Budowę zaczyna jeden: <code>buduj &lt;nazwa&gt;</code>, reszta dołącza sama
+          (włączone „pomaga kolegom”) albo po <code>pomoc</code>. Duże budowle dzielą się na działki 16×16.</p>
       </div>
       <div id="botGrid" class="bot-grid"></div>
     </section>

@@ -207,13 +207,15 @@ async function loadDesigns() {
       <div class="bbtns">
         <button class="btn primary small" data-act="build">Buduj</button>
         <button class="btn small" data-act="view">👁 Podgląd</button>
-        <button class="btn small" data-act="edit">Edytuj</button>
+        ${d.spec?.parts?.length ? '<button class="btn small" data-act="edit">Edytuj</button>' : ''}
         <button class="btn ghost small danger-text" data-act="del">🗑</button>
       </div>
     </div>`).join('') : '<p class="muted">Nie masz jeszcze projektów. Opisz budowlę powyżej i kliknij „Zapisz”.</p>'
   document.querySelectorAll('#crList .proj').forEach(el => {
     const d = designs.find(x => x.key === el.dataset.key)
-    if (d?.spec) drawIso(el.querySelector('canvas'), Designer.generate(d.spec).cells)
+    // duze projekty z generatora (tools/) maja gotowa, zmniejszona miniature
+    if (d?.thumb) drawIso(el.querySelector('canvas'), d.thumb)
+    else if (d?.spec?.parts?.length) drawIso(el.querySelector('canvas'), Designer.generate(d.spec).cells)
   })
   refreshCommandHints()
 }
@@ -223,7 +225,11 @@ $('crList').addEventListener('click', async e => {
   if (!el || !act) return
   const d = designs.find(x => x.key === el.dataset.key)
   if (!d) return
-  if (act === 'view') { const cells = await B.designPlan(d.key); openViewer({ name: d.name, cells: cells || Designer.generate(d.spec).cells, cmd: `buduj ${d.name}`, spec: d.spec, description: d.description }) }
+  if (act === 'view') {
+    if (d.blocks > 50000) toast('Duży projekt – rysuję podgląd…')
+    const cells = await B.designPlan(d.key)
+    openViewer({ name: d.name, cells: cells || Designer.generate(d.spec).cells, cmd: `buduj ${d.name}`, spec: d.spec?.parts?.length ? d.spec : null, description: d.description })
+  }
   if (act === 'build') { if (await send(`buduj ${d.name}`)) toast(`${profile(selected)?.name}: buduj ${d.name}`, 'ok') }
   if (act === 'edit') openInCreator(d.spec, d.name)
   if (act === 'del') { if (confirm(`Usunąć projekt „${d.name}”?`)) { await B.deleteDesign(d.key); loadDesigns() } }
@@ -287,13 +293,19 @@ function openViewer(item) {
   vw.item = item
   vw.cells = item.cells
   const solid = item.cells.filter(c => c.block !== 'air' && !c.temp)
-  const ys = solid.map(c => c.y)
-  const span = a => a.length ? Math.max(...a) - Math.min(...a) + 1 : 0
+  // granice petla (Math.max(...tablica) przy 100 tys. blokow przepelnia stos)
+  const b = { x1: Infinity, x2: -Infinity, y1: Infinity, y2: -Infinity, z1: Infinity, z2: -Infinity }
+  for (const c of solid) {
+    if (c.x < b.x1) b.x1 = c.x; if (c.x > b.x2) b.x2 = c.x
+    if (c.y < b.y1) b.y1 = c.y; if (c.y > b.y2) b.y2 = c.y
+    if (c.z < b.z1) b.z1 = c.z; if (c.z > b.z2) b.z2 = c.z
+  }
+  if (!solid.length) Object.assign(b, { x1: 0, x2: -1, y1: 0, y2: -1, z1: 0, z2: -1 })
   $('vwTitle').textContent = item.name
-  $('vwSize').textContent = `${span(solid.map(c => c.x))} × ${span(solid.map(c => c.z))} × ${span(ys)} (szer. × głęb. × wys.) · ${solid.length} bloków`
+  $('vwSize').textContent = `${b.x2 - b.x1 + 1} × ${b.z2 - b.z1 + 1} × ${b.y2 - b.y1 + 1} (szer. × głęb. × wys.) · ${solid.length} bloków`
   const L = $('vwLayer')
-  L.min = ys.length ? Math.min(...ys) : 0
-  L.max = ys.length ? Math.max(...ys) : 0
+  L.min = solid.length ? b.y1 : 0
+  L.max = solid.length ? b.y2 : 0
   L.value = L.max
   $('vwLayerInfo').textContent = item.description || ''
   const mats = {}

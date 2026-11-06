@@ -125,6 +125,26 @@ $('botGrid').addEventListener('dblclick', e => {
   if (card && card.dataset.id && !e.target.closest('button')) playBot(card.dataset.id)
 })
 $('btnStopAll').addEventListener('click', () => running.forEach(id => B.stop(id)))
+// druzyna: kopie wybranego bota i uruchamianie wszystkich naraz
+$('btnTeam').addEventListener('click', () => {
+  if (!profile(selected)) { toast('Najpierw kliknij bota, którego skopiować', 'err'); return }
+  $('teamFrom').textContent = profile(selected).name
+  $('teamBox').classList.toggle('hidden')
+})
+$('teamCancel').addEventListener('click', () => $('teamBox').classList.add('hidden'))
+$('teamAdd').addEventListener('click', async () => {
+  const r = await B.makeTeam(selected, Number($('teamCount').value))
+  if (!r.ok) { toast(r.error, 'err'); return }
+  $('teamBox').classList.add('hidden')
+  toast(`Dodano: ${r.names.join(', ')}`, 'ok')
+  profiles = await B.profiles()
+  await renderBots()
+})
+$('btnStartAll').addEventListener('click', async () => {
+  toast('Uruchamiam wszystkie boty po kolei…')
+  const r = await B.startAll()
+  if (!r.ok) toast(r.errors.join(' '), 'err')
+})
 
 // usuwa bota (dzialajacego najpierw wylacza) razem z jego pamiecia
 async function deleteBot(id) {

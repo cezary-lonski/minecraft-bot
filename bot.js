@@ -2424,9 +2424,12 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
   if (opts.type && !opts.decor && !opts.helper && !opts.resume) recordBuild(opts.type, origin, front)
   // pomocnik robi prawa polowe (x >= 0); lider robi calosc i pomija to, co juz stoi
   const cells = plan.filter(c => opts.part !== 'right' || c.x >= 0).map(c => ({ ...c, pos: toWorld(origin, front, c.x, c.y, c.z) }))
+  // duze budowle stawiamy dzialkami 16x16 - wtedy moze pomagac dowolnie wielu kolegow
+  const tiled = !opts.decor && (opts.tiled ?? cells.filter(c => c.block !== 'air').length > TILED_FROM)
+  let scanTimer = null
   if (opts.type && !opts.helper) {
     currentJob = { kind: opts.decor ? 'decor' : 'build', type: opts.type, label, origin: { x: origin.x, y: origin.y, z: origin.z }, front,
-      start: { x: startFeet.x, y: startFeet.y, z: startFeet.z } }
+      start: { x: startFeet.x, y: startFeet.y, z: startFeet.z }, tiled }
     rememberJob(currentJob)
     if (cells.filter(c => c.block !== 'air').length > 40) askForHelp(currentJob)
   }
@@ -2518,33 +2521,41 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
     let failed = 0
 
     // 1) teren: od gory wykopujemy to, co przeszkadza (ziemia, trawa, kamien w obrysie)
-    say(`Buduje ${label} (${total} blokow). Najpierw przygotowuje teren.`)
+    say(tiled ? `Buduje ${label} (${total} blokow) dzialkami 16x16 - koledzy moga dolaczyc ("pomoc").` : `Buduje ${label} (${total} blokow). Najpierw przygotowuje teren.`)
     await travelToSite(siteCenter)
     if (!running) return false
-    bot.pathfinder.setMovements(terrainMoves)
-    // najpierw liczymy, co trzeba wykopac - zeby "czas" pokazywal postep tez przy przygotowaniu terenu
-    const clearLayers = [...new Set(cells.map(c => c.y))].sort((a, b) => b - a)
-    const toClear = clearLayers.flatMap(y => snakeOrder(cells.filter(c => c.y === y))).filter(c => {
-      const b = bot.blockAt(c.pos)
-      if (!b || b.boundingBox !== 'block' || sameKind(b.name, c.block) || (opts.decor && c.block !== 'air')) return false // wystroj nie burzy tego, co juz stoi
-      // pomocnik kopie tylko naturalny teren - gdyby kolega podal zle miejsce, nie rozwali niczyjego domu
-      return !opts.helper || NATURAL_RE.test(b.name)
-    })
-    currentBuild.terrainTotal = toClear.length
-    for (const c of toClear) {
-      if (!running) return false
-      currentBuild.terrainDone++
-      const b = bot.blockAt(c.pos)
-      if (!b || b.boundingBox !== 'block' || sameKind(b.name, c.block)) continue
-      setStatus(`przygotowuje teren pod ${label}: ${currentBuild.terrainDone}/${toClear.length}`)
-      try { await goNearCell(c.pos); await clearBlock(c.pos) } catch (e) { console.log('[bot] teren:', e.message) }
+    const clearTerrain = async (list, where) => {
+      bot.pathfinder.setMovements(terrainMoves)
+      const clearLayers = [...new Set(list.map(c => c.y))].sort((a, b) => b - a)
+      // najpierw liczymy, co trzeba wykopac - zeby "czas" pokazywal postep tez przy przygotowaniu terenu
+      const toClear = clearLayers.flatMap(y => snakeOrder(list.filter(c => c.y === y))).filter(c => {
+        const b = bot.blockAt(c.pos)
+        if (!b || b.boundingBox !== 'block' || sameKind(b.name, c.block) || (opts.decor && c.block !== 'air')) return false // wystroj nie burzy tego, co juz stoi
+        // pomocnik kopie tylko naturalny teren - gdyby kolega podal zle miejsce, nie rozwali niczyjego domu
+        return !opts.helper || NATURAL_RE.test(b.name)
+      })
+      if (!tiled) currentBuild.terrainTotal = toClear.length
+      let n = 0
+      for (const c of toClear) {
+        if (!running) return false
+        n++
+        if (!tiled) currentBuild.terrainDone++
+        const b = bot.blockAt(c.pos)
+        if (!b || b.boundingBox !== 'block' || sameKind(b.name, c.block)) continue
+        setStatus(`przygotowuje teren pod ${label}${where}: ${n}/${toClear.length}`)
+        try { await goNearCell(c.pos); await clearBlock(c.pos) } catch (e) { console.log('[bot] teren:', e.message) }
+      }
+      return true
     }
+    if (!tiled && !await clearTerrain(cells, '')) return false
     // od teraz liczy sie tempo stawiania
     // to, co juz stoi (np. po "kontynuuj"), liczy sie od razu - procent jest prawdziwy, a tempo liczymy tylko z nowych blokow
     const counted = new Set()
-    for (const c of cells) if (c.block !== 'air' && sameKind(bot.blockAt(c.pos)?.name || '', c.block)) counted.add(posKey(c.pos))
-    placed = counted.size
+    const scanPlaced = () => { for (const c of cells) if (c.block !== 'air' && sameKind(bot.blockAt(c.pos)?.name || '', c.block)) counted.add(posKey(c.pos)); placed = counted.size }
+    scanPlaced()
     Object.assign(currentBuild, { phase: 'budowa', startedAt: Date.now(), basePlaced: placed })
+    // przy budowie druzyna postep liczymy z tego, co naprawde stoi (stawiaja tez koledzy)
+    if (tiled) scanTimer = setInterval(() => { try { scanPlaced() } catch {} }, 30000)
 
     // 2) stawianie warstwami od dolu; w warstwie kilka przejsc - blok musi miec sie o co oprzec
     const layers = [...new Set(cells.map(c => c.y))].sort((a, b) => a - b)
@@ -2593,9 +2604,13 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
       }
       return pending
     }
-    for (const y of layers) {
-      const pending = snakeOrder(cells.filter(c => c.y === y && c.block !== 'air' && !c.late))
-      const where = `warstwa ${y - layers[0] + 1}/${layers.length}`
+    // stawianie warstwami (cala budowla, jedna dzialka albo to, co zostalo)
+    const buildLayers = async (list, tag = '') => {
+    const ys = [...new Set(list.map(c => c.y))].sort((a, b) => a - b)
+    for (const y of ys) {
+      if (!running) return false
+      const pending = snakeOrder(list.filter(c => c.y === y && c.block !== 'air' && !c.late))
+      const where = `${tag}warstwa ${y - layers[0] + 1}/${layers.length}`
       if (batched && !isCreative() && pending.length) {
         // duza budowla w survivalu: material na warstwe partiami, ktore mieszcza sie w ekwipunku (stawiamy partie i wracamy po nastepna)
         const left = pending.filter(c => notPlaced(c))
@@ -2609,7 +2624,7 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
           bot.pathfinder.setMovements(normalMoves)
           const what = i < left.length || part > 1 ? `${label} (${where}, czesc ${part})` : `${label} (${where})`
           if (!await gatherMaterials(chunk.filter(c => !c.optional && notPlaced(c)), what)) return false
-          await travelToSite(siteCenter)
+          await travelToSite(chunk[0]?.pos || siteCenter)
           if (wantExtras) for (const c of chunk.filter(o => o.optional)) if (haveOf(c.block) < 1) { try { await obtain(c.block, 1) } catch {} }
           await scaffoldDirt()
           bot.pathfinder.setMovements(buildMoves)
@@ -2622,6 +2637,63 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
       await scaffoldDirt() // ziemia na rusztowania sie konczy - dobieramy
       bot.pathfinder.setMovements(buildMoves)
       failed += (await runPasses(pending, y === layers[0], where)).length
+    }
+    return running
+    }
+
+    if (!tiled) {
+      if (!await buildLayers(cells)) return false
+    } else {
+      // BUDOWA DZIALKAMI 16x16: kazdy bot bierze wolna dzialke najblizej siebie, stawia ja od dolu do gory, oglasza "gotowe"
+      // i bierze nastepna. Dzialki sa liczone ze wspolrzednych swiata, wiec wszystkie boty dziela budowle tak samo.
+      const jobKey = jobKeyOf({ type: opts.type || label, origin })
+      const board = boardFor(jobKey)
+      const tiles = new Map()
+      for (const c of cells) {
+        const t = `${Math.floor(c.pos.x / TILE)},${Math.floor(c.pos.z / TILE)}`
+        if (!tiles.has(t)) tiles.set(t, [])
+        tiles.get(t).push(c)
+      }
+      const tileCenter = t => { const [a, b] = t.split(',').map(Number); return new Vec3(a * TILE + TILE / 2, bot.entity.position.y, b * TILE + TILE / 2) }
+      // dzialka ma robote, gdy cos w niej nie stoi (dzialek poza zasiegiem wzroku nie widac - liczymy, ze maja)
+      const hasWork = t => tiles.get(t).some(c => c.block !== 'air' && !c.late && notPlaced(c))
+      const takenByOther = t => { const e = board.get(t); return e && !e.done && e.by !== bot.username && claimAlive(e) }
+      myBoard = { jobKey, board }
+      let swept = false
+      const tileCount = tiles.size
+      for (;;) {
+        if (!running) return false
+        const free = [...tiles.keys()].filter(t => !board.get(t)?.done && !takenByOther(t))
+        free.sort((a, b) => tileCenter(a).distanceTo(bot.entity.position) - tileCenter(b).distanceTo(bot.entity.position))
+        const t = free.find(hasWork)
+        if (!t) {
+          for (const x of free) markTile(jobKey, x, bot.username, true) // wolne, ale bez roboty - gotowe
+          const open = [...tiles.keys()].filter(x => !board.get(x)?.done)
+          if (!open.length) break
+          // nic wolnego: poprawiamy to, co w gotowych dzialkach nie wyszlo (np. brak oparcia na granicy), potem czekamy
+          if (!swept) {
+            swept = true
+            const rest = [...tiles.keys()].filter(x => board.get(x)?.done).flatMap(x => tiles.get(x)).filter(c => c.block !== 'air' && notPlaced(c))
+            if (rest.length) { say(`Poprawiam ${rest.length} blokow w gotowych dzialkach.`); if (!await buildLayers(rest, 'poprawki, ')) return false }
+          }
+          const doneN = tileCount - open.length
+          setStatus(`czekam, az koledzy skoncza dzialki (${doneN}/${tileCount} gotowe)`)
+          await sleep(5000)
+          continue
+        }
+        markTile(jobKey, t, bot.username, false)
+        const doneN = [...tiles.keys()].filter(x => board.get(x)?.done).length
+        const tag = `dzialka ${doneN + 1}/${tileCount}, `
+        console.log(`[bot] biore dzialke ${t} (${tiles.get(t).length} komorek)`)
+        if (!await clearTerrain(tiles.get(t), ` (dzialka ${t})`)) return false
+        if (!await buildLayers(tiles.get(t), tag)) return false
+        markTile(jobKey, t, bot.username, true)
+      }
+      // na koniec wszyscy jeszcze raz przechodza cala budowle: to, co na granicach dzialek nie mialo oparcia
+      // (wczesniejsze nieudane bloki liczymy od nowa - wiekszosc wychodzi teraz, gdy sasiednie dzialki stoja)
+      failed = 0
+      const rest = cells.filter(c => c.block !== 'air' && !c.late && notPlaced(c))
+      if (rest.length) { say(`Wszystkie dzialki gotowe - dokanczam ${rest.length} blokow.`); if (!await buildLayers(rest, 'dokanczanie, ')) return false }
     }
 
     // 2b) lampy pod stropem i obrazy - na koniec, kiedy stropy i sciany juz stoja
@@ -2664,6 +2736,8 @@ async function buildPlan(label, plan, origin, front, opts = {}) {
     if (running) say(failed ? `${label} gotowe, ale ${failed} blokow nie udalo sie postawic.` : `${label} gotowe!`)
     return true
   } finally {
+    clearInterval(scanTimer)
+    myBoard = null
     bot.pathfinder.setMovements(normalMoves)
     protectedItems.clear()
     currentBuild = null
@@ -3117,10 +3191,23 @@ const PLAN_FOR_TYPE = {
 // plik: { key, name, description, plan: [{x,y,z,block,...}], rooms: [...], ahead }
 const DESIGNS_DIR = process.env.MC_DESIGNS_DIR || pathLib.join(DATA_DIR, 'projekty')
 const designKey = s => stripPl(String(s || '')).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+// pliki czytamy tylko po zmianie (wielki projekt to kilka MB - kazda komenda czytalaby go od nowa)
+const designCache = new Map() // plik -> { mtime, data }
 function loadDesigns() {
   try {
-    return fs.readdirSync(DESIGNS_DIR).filter(n => n.endsWith('.json')).map(n => {
-      try { return JSON.parse(fs.readFileSync(pathLib.join(DESIGNS_DIR, n), 'utf8')) } catch { return null }
+    const names = fs.readdirSync(DESIGNS_DIR).filter(n => n.endsWith('.json'))
+    for (const n of [...designCache.keys()]) if (!names.includes(n)) designCache.delete(n)
+    return names.map(n => {
+      const file = pathLib.join(DESIGNS_DIR, n)
+      try {
+        const mtime = fs.statSync(file).mtimeMs
+        const hit = designCache.get(n)
+        if (hit && hit.mtime === mtime) return hit.data
+        const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+        delete data.thumb
+        designCache.set(n, { mtime, data })
+        return data
+      } catch { return null }
     }).filter(d => d && d.key && Array.isArray(d.plan))
   } catch { return [] }
 }
@@ -4158,6 +4245,45 @@ const AUTO_HELP = process.env.MC_AUTO_HELP !== '0'
 const team = new Map() // nick -> ostatni stan
 let currentJob = null // biezaca praca, do ktorej moga dolaczyc inni: { kind, type, label, origin, front }
 
+// ---------- budowa dzialkami (wiele botow przy jednej duzej budowli) ----------
+// Tablica dzialek dla kazdej budowy: kto bierze ktora dzialke i ktore sa gotowe. Boty wymieniaja ja przez centrum
+// sterowania (wiadomosc "tile" przy zmianie i caly stan co 2 s), wiec dolaczajacy pozniej tez wie, co zostalo.
+const TILE = 16
+const TILED_FROM = 4000 // od tylu blokow budowla jest dzielona na dzialki
+const boards = new Map() // jobKey -> Map(tile -> { by, done, at })
+let myBoard = null // { jobKey, board } - budowa, przy ktorej teraz pracujemy
+const jobKeyOf = j => `${j.type}@${j.origin.x},${j.origin.y},${j.origin.z}`
+function boardFor(jobKey) {
+  if (!boards.has(jobKey)) boards.set(jobKey, new Map())
+  return boards.get(jobKey)
+}
+function markTile(jobKey, tile, by, done, quiet) {
+  const board = boardFor(jobKey)
+  const prev = board.get(tile)
+  if (prev?.done && !done) return // gotowej dzialki nikt juz nie bierze
+  board.set(tile, { by, done: !!done, at: Date.now(), tile })
+  if (!quiet && by === bot.username) teamSend({ type: 'tile', job: jobKey, tile, done: !!done })
+}
+// czy kolega, ktory wzial dzialke, jeszcze nad nia pracuje (odzywa sie; wzial ja niedawno albo nadal ja zglasza)
+function claimAlive(e) {
+  const mate = teammates().find(t => t.from === e.by)
+  if (!mate) return false
+  return Date.now() - e.at < 20000 || mate.board?.doing?.includes(e.tile)
+}
+function boardState() {
+  if (!myBoard) return null
+  const done = []
+  const doing = []
+  for (const [t, e] of myBoard.board) { if (e.done) done.push(t); else if (e.by === bot.username) doing.push(t) }
+  return { job: myBoard.jobKey, done, doing }
+}
+function mergeBoard(from, b) {
+  if (!b?.job) return
+  const board = boardFor(b.job)
+  for (const t of b.done || []) if (!board.get(t)?.done) board.set(t, { by: from, done: true, at: Date.now(), tile: t })
+  for (const t of b.doing || []) { const e = board.get(t); if (!e || (!e.done && e.by !== bot.username)) board.set(t, { by: from, done: false, at: Date.now(), tile: t }) }
+}
+
 function teamSend(msg) {
   if (!TEAM || !bot.username) return
   process.stdout.write('@@TEAM ' + JSON.stringify({ ...msg, from: bot.username }) + '\n')
@@ -4174,7 +4300,7 @@ setInterval(() => {
   const inv = {}
   for (const it of bot.inventory.items()) inv[it.name] = (inv[it.name] || 0) + it.count
   const p = bot.entity.position
-  teamSend({ type: 'state', inv, pos: { x: p.x, y: p.y, z: p.z }, dim: bot.game?.dimension, task: currentTask, job: currentJob, busy: running || activeTasks > 0 })
+  teamSend({ type: 'state', inv, pos: { x: p.x, y: p.y, z: p.z }, dim: bot.game?.dimension, task: currentTask, job: currentJob, busy: running || activeTasks > 0, board: boardState() })
 }, 2000)
 
 // prosba o pomoc w biezacej pracy (budowa, wystroj, burzenie) - odpowiada pierwszy wolny kolega
@@ -4193,7 +4319,8 @@ function askForFightHelp() {
 
 function handleTeam(msg) {
   if (!msg || msg.from === bot.username) return
-  if (msg.type === 'state') { team.set(msg.from, { ...msg, at: Date.now() }); return }
+  if (msg.type === 'state') { team.set(msg.from, { ...msg, at: Date.now() }); mergeBoard(msg.from, msg.board); return }
+  if (msg.type === 'tile') { const e = boardFor(msg.job).get(msg.tile); if (!e?.done) boardFor(msg.job).set(msg.tile, { by: msg.from, done: !!msg.done, at: Date.now(), tile: msg.tile }); return }
   if (msg.to && msg.to !== bot.username) return
   if (msg.type === 'help') {
     if (!AUTO_HELP || running || activeTasks > 0 || !mcData) return
@@ -4222,7 +4349,8 @@ function joinJob(name, job, auto) {
     say(`${tag}pomagam ${name} budowac: ${job.type}.`)
     return task(`pomoc w budowie (${job.type})`, () =>
       buildPlan(`${job.type} (pomoc)`, planWithDecor(job.type, planOf(job.type)), origin, job.front,
-        { type: job.type, helper: true, part: 'right', passes: job.type === 'palac endu' || !PLAN_FOR_TYPE[job.type] ? 6 : 4 }))
+        // duza budowla: wspolne dzialki (bez podzialu na polowy); mala: prawa polowa
+        { type: job.type, helper: true, part: job.tiled ? undefined : 'right', tiled: !!job.tiled, passes: job.type === 'palac endu' || !PLAN_FOR_TYPE[job.type] ? 6 : 4 }))
   }
   if (job.kind === 'decor' && decorPlan(job.type)) {
     say(`${tag}pomagam ${name} w wystroju: ${job.type}.`)

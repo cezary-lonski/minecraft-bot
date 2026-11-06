@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('bridge', {
   installUpdate: () => ipcRenderer.invoke('update:install'),
   // kreator budowli i wlasne komendy
   blocks: () => ipcRenderer.invoke('designer:blocks'),
+  makeTeam: (fromId, count) => ipcRenderer.invoke('profiles:team', fromId, count),
+  startAll: () => ipcRenderer.invoke('bot:startAll'),
   designs: () => ipcRenderer.invoke('designs:list'),
   designPlan: key => ipcRenderer.invoke('designs:plan', key),
   builtins: () => ipcRenderer.invoke('builtins:list'),

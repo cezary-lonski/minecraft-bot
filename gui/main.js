@@ -316,6 +316,36 @@ ipcMain.handle('profiles:save', (e, p) => {
   saveProfiles([...list, { ...BOT_DEFAULTS, ...p, id, created: Date.now() }])
   return { ok: true, id }
 })
+// druzyna: kopie wybranego bota (ten sam swiat i ustawienia) z kolejnymi numerami w nicku, np. Kopacz1..Kopacz6
+ipcMain.handle('profiles:team', (e, fromId, count) => {
+  const list = loadProfiles()
+  const base = list.find(x => x.id === fromId)
+  if (!base) return { ok: false, error: 'Najpierw wybierz bota, którego skopiować.' }
+  const n = Math.max(1, Math.min(50, Number(count) || 0))
+  const stem = base.name.replace(/\d+$/, '').slice(0, 13) || 'Bot'
+  const taken = new Set(list.map(x => x.name.toLowerCase()))
+  const added = []
+  for (let i = 1; added.length < n && i < 1000; i++) {
+    const name = stem + i
+    if (taken.has(name.toLowerCase())) continue
+    taken.add(name.toLowerCase())
+    added.push({ ...base, id: newId(), name, aiChat: false, autoHelp: true, created: Date.now(), lastPlayed: 0 })
+  }
+  saveProfiles([...list, ...added])
+  rebuildSkinPack()
+  return { ok: true, names: added.map(x => x.name) }
+})
+// wszystkie boty naraz - po kolei co 1.5 s (serwer nie lubi wielu logowan w jednej chwili)
+ipcMain.handle('bot:startAll', async () => {
+  const errors = []
+  for (const p of loadProfiles()) {
+    if (procs.has(p.id)) continue
+    const r = startBot(p.id)
+    if (!r.ok) errors.push(r.error)
+    await new Promise(resolve => setTimeout(resolve, 1500))
+  }
+  return { ok: !errors.length, errors }
+})
 ipcMain.handle('profiles:delete', async (e, id) => {
   // dzialajacy bot ma swoj folder jako katalog roboczy - na Windows folderu nie da sie usunac, zanim proces sie nie zakonczy
   const entry = procs.get(id)
@@ -370,7 +400,7 @@ function listDir(dir) {
   } catch { return [] }
 }
 ipcMain.handle('designer:blocks', () => BLOCKS)
-ipcMain.handle('designs:list', () => listDir(DESIGNS_DIR).map(d => ({ key: d.key, name: d.name, description: d.description, spec: d.spec, size: d.size, blocks: d.blocks, created: d.created })).sort((a, b) => (b.created || 0) - (a.created || 0)))
+ipcMain.handle('designs:list', () => listDir(DESIGNS_DIR).map(d => ({ key: d.key, name: d.name, description: d.description, spec: d.spec, size: d.size, blocks: d.blocks, thumb: d.thumb, created: d.created })).sort((a, b) => (b.created || 0) - (a.created || 0)))
 ipcMain.handle('designs:save', (e, spec) => saveDesign(spec))
 // podglad: dokladnie to, co zbuduje bot (zapisany plan), bez pustych komorek
 ipcMain.handle('designs:plan', (e, key) => {
