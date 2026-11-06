@@ -110,12 +110,29 @@ function botEnv(p) {
   if (p.loot === 'on') env.MC_LOOT = '1'
   if (p.loot === 'off') env.MC_LOOT = '0'
   if (p.eatBelow) env.MC_EAT_BELOW = String(p.eatBelow)
+  if (p.helperFor) env.MC_HELPER_FOR = p.helperFor // jednorazowy pomocnik: komu pomaga
   return env
+}
+
+// ---------- pomocnik: jednorazowy bot na wezwanie (komenda "pomocnik <nick>") ----------
+// Nie trafia do listy botow (bots.json); po skonczonej pomocy sam wychodzi z gry, a jego folder znika.
+const tempProfiles = new Map()
+function spawnHelper(fromId, forName) {
+  const base = loadProfiles().find(x => x.id === fromId) || tempProfiles.get(fromId)
+  if (!base) return
+  if (tempProfiles.size >= 10) { send('log', { id: fromId, kind: 'error', text: 'Juz dziala 10 pomocnikow - wiecej nie wolam.' }); return }
+  const taken = new Set([...loadProfiles(), ...tempProfiles.values()].map(x => x.name.toLowerCase()))
+  let n = 1
+  while (taken.has(('Pomocnik' + n).toLowerCase())) n++
+  const p = { ...base, id: 'tmp' + newId(), name: 'Pomocnik' + n, aiChat: false, autoHelp: false, temp: true, helperFor: String(forName || '').slice(0, 16) }
+  tempProfiles.set(p.id, p)
+  const r = startBot(p.id)
+  if (!r.ok) { tempProfiles.delete(p.id); send('log', { id: fromId, kind: 'error', text: `Pomocnik: ${r.error}` }) }
 }
 
 function startBot(id) {
   if (procs.has(id)) return { ok: true }
-  const p = loadProfiles().find(x => x.id === id)
+  const p = loadProfiles().find(x => x.id === id) || tempProfiles.get(id)
   if (!p) return { ok: false, error: 'Nie ma takiego bota.' }
   if (p.mode === 'lan' && !/^\d+$/.test(String(p.port))) return { ok: false, error: `${p.name}: podaj port LAN (pokazuje sie w grze po "Open to LAN").` }
   if (p.mode !== 'lan' && !p.host) return { ok: false, error: `${p.name}: podaj adres serwera.` }
@@ -124,7 +141,7 @@ function startBot(id) {
   const entry = { proc, buf: '', username: p.name }
   procs.set(id, entry)
   // zapamietujemy, kiedy bot ostatnio gral
-  saveProfiles(loadProfiles().map(x => x.id === id ? { ...x, lastPlayed: Date.now() } : x))
+  if (!p.temp) saveProfiles(loadProfiles().map(x => x.id === id ? { ...x, lastPlayed: Date.now() } : x))
   send('bot-state', { id, running: true })
   send('log', { id, kind: 'gui', text: `Uruchamiam ${p.name} (${p.mode === 'lan' ? 'LAN, port ' + p.port : 'serwer ' + p.host})...` })
   proc.stdout.on('data', chunk => {
@@ -138,6 +155,10 @@ function startBot(id) {
   })
   proc.on('exit', code => {
     procs.delete(id)
+    if (p.temp) {
+      tempProfiles.delete(id)
+      setTimeout(() => { try { fs.rmSync(botDir(id), { recursive: true, force: true }) } catch {} }, 1000)
+    }
     send('bot-state', { id, running: false, code })
     send('log', { id, kind: 'gui', text: `${p.name} zakonczyl dzialanie${code ? ' (kod ' + code + ')' : ''}.` })
   })
@@ -151,6 +172,10 @@ function handleBotLine(id, line) {
       lastStatus.set(id, { connected: st.connected, health: st.health, food: st.food, pos: st.pos, task: st.task, gameMode: st.gameMode })
       send('status', { id, ...st })
     } catch {}
+    return
+  }
+  if (line.startsWith('@@SPAWN ')) {
+    try { spawnHelper(id, JSON.parse(line.slice(8)).for) } catch {}
     return
   }
   if (line.startsWith('@@AICMDRES ')) {
@@ -302,7 +327,7 @@ function newId() { return 'b' + Date.now().toString(36) + Math.random().toString
 
 // skin (jako obrazek) do glowy na karcie bota
 const skinData = id => { try { return 'data:image/png;base64,' + fs.readFileSync(skinFile(id)).toString('base64') } catch { return null } }
-ipcMain.handle('profiles:list', () => loadProfiles().map(p => ({ ...p, running: procs.has(p.id), skin: skinData(p.id) })))
+ipcMain.handle('profiles:list', () => [...loadProfiles(), ...tempProfiles.values()].map(p => ({ ...p, running: procs.has(p.id), skin: skinData(p.id) })))
 ipcMain.handle('profiles:save', (e, p) => {
   const list = loadProfiles()
   if (!p.name || !/^\w{3,16}$/.test(p.name)) return { ok: false, error: 'Nick bota: 3-16 znakow (litery, cyfry, _).' }

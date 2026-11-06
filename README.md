@@ -319,6 +319,7 @@ miska, butelka, łódka, wózek, tory, książka, papier, cukier, dźwignia, prz
 | `pomóż` | dołącza do pracy innego bota: budowy, burzenia albo walki |
 | `pomóż <bot>` | pomaga konkretnemu botowi |
 | `pomoc <kto> <komu>` | na czacie gry, gdy działa kilka botów: np. `pomoc Kopacz Claude` — Kopacz dołącza do pracy Claude (budowa, burzenie, walka), pozostałe boty to ignorują |
+| `pomocnik [nick]` | program wpuszcza do gry **jednorazowego bota** (Pomocnik1, Pomocnik2…), który pomaga podanemu graczowi albo botowi: przy budowie bierze część pracy, przy zdobywaniu robi to samo i oddaje zdobycz, a w walce (albo gdy nic nie robi) pilnuje go 10 minut. Potem sam wychodzi i nie zostaje na liście botów. Bez nicku pomaga Tobie |
 | `poproś <bot> o <co> [ile]` | prosi innego bota o przedmioty — przyniesie je i wyrzuci |
 
 ### Baza i punkty

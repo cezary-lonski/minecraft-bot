@@ -1266,7 +1266,7 @@ const HELP = [
   'Budowa (z wystrojem): zburz <budowla>, usun obszar <x y z|nick> <x y z|nick>, rozbierz rusztowania, buduj dom | zamek | zamczysko | palac | palac endu | dom villagera | baza podziemna | skybase | napis: <tekst> | farma <zboza|marchwi|ziemniakow|burakow|drzew|trzciny|zwierzat>',
   'Punkty: zapisz <nazwa>, ustaw dom, dom, punkty, usun <nazwa>, gdzie',
   'Rzeczy: eq, czy masz <co>, postaw <co> [x y z], daj <co> [ile], wez <co> [ile], schowaj [co|wszystko], przeszukaj, szukaj, skrzynie wl/wyl, wyrzuc <co|smieci> [ile], trzymaj <co>, zaloz, jedz, podnies',
-  'Zespol: pomoz [bot], pomoc <kto> <komu> (np. pomoc Kopacz Claude), popros <bot> o <co> [ile], zabij <gracz|mob|imie>',
+  'Zespol: pomoz [bot], pomoc <kto> <komu> (np. pomoc Kopacz Claude), pomocnik [nick] (jednorazowy bot do pomocy), popros <bot> o <co> [ile], zabij <gracz|mob|imie>',
   'Po bledzie (np. zabraklo blokow): daj mu brakujace rzeczy i napisz kontynuuj. Ile do konca budowy: czas',
   'Wlasne: projekty, buduj <projekt>, moje komendy, naucz sie <nazwa>: krok; krok, zapomnij komende <nazwa>',
   'Inne: status, co robisz, diag, chat <tekst>, permisja <nick>, odbierz <nick>, permisje'
@@ -4300,7 +4300,7 @@ setInterval(() => {
   const inv = {}
   for (const it of bot.inventory.items()) inv[it.name] = (inv[it.name] || 0) + it.count
   const p = bot.entity.position
-  teamSend({ type: 'state', inv, pos: { x: p.x, y: p.y, z: p.z }, dim: bot.game?.dimension, task: currentTask, job: currentJob, busy: running || activeTasks > 0, board: boardState() })
+  teamSend({ type: 'state', inv, pos: { x: p.x, y: p.y, z: p.z }, dim: bot.game?.dimension, task: currentTask, job: currentJob, busy: running || activeTasks > 0, board: boardState(), cmd: running ? lastTask?.cmd : null })
 }, 2000)
 
 // prosba o pomoc w biezacej pracy (budowa, wystroj, burzenie) - odpowiada pierwszy wolny kolega
@@ -4387,6 +4387,67 @@ function helpCommand(arg) {
   if (target.job?.origin) say(`Ide pomoc ${target.from}: ${target.job.label || target.job.type} na ${target.job.origin.x} ${target.job.origin.y} ${target.job.origin.z}.`)
   return joinJob(target.from, target.job, false)
 }
+
+// ---------- pomocnik: jednorazowy bot na wezwanie ----------
+// "pomocnik <nick>" - program wpuszcza do gry nowego bota (Pomocnik1, 2...), ktory pomaga temu graczowi albo botowi:
+// w budowie (dzialki / polowa), w zdobywaniu (robi to samo i oddaje zdobycz) albo w walce (pilnuje go), a potem wychodzi.
+const HELPER_FOR = process.env.MC_HELPER_FOR || ''
+function helperCommand(user, arg) {
+  if (!TEAM) { say('Pomocnika wola program (centrum sterowania) - uruchom mnie z niego.'); return }
+  if (HELPER_FOR) return // pomocnik nie wola kolejnych
+  const me = bot.username
+  const bots = [me, ...teammates().map(t => t.from)].filter(n => !/^Pomocnik\d+$/.test(n) || n === me)
+  const want = (arg || '').toLowerCase()
+  const asked = !want || /^(mnie|mi|ja)$/.test(want) ? (user || process.env.MC_PLAYER || me) : want
+  const matchName = list => list.find(n => n.toLowerCase() === asked.toLowerCase()) || (asked.length >= 3 && list.find(n => n.toLowerCase().startsWith(asked.toLowerCase())))
+  const botTarget = matchName(bots)
+  // czat slysza wszystkie boty: woła ten, ktoremu ma pomoc, a gdy to gracz - bot o "najmniejszym" nicku
+  const caller = botTarget || [...bots].sort((a, b) => a.localeCompare(b))[0]
+  if (caller !== me) return
+  const who = botTarget || matchName(Object.keys(bot.players)) || asked
+  say(`Wolam pomocnika dla ${who} - zaraz wejdzie do gry.`)
+  process.stdout.write('@@SPAWN ' + JSON.stringify({ for: who }) + '\n')
+}
+
+const GATHER_CMD = /^(zdobadz|zbierz|wykop|przynies|scraftuj|zrob|stworz|przepal|poluj|etap|start)\b/
+async function helperMode() {
+  const name = HELPER_FOR
+  await sleep(4000) // stan kolegow przychodzi co 2 s
+  let mate = null
+  for (let i = 0; i < 10 && !mate; i++) { mate = teammates().find(t => t.from.toLowerCase() === name.toLowerCase()); if (!mate) await sleep(1000) }
+  const who = mate?.from || Object.keys(bot.players).find(n => n.toLowerCase() === name.toLowerCase()) || name
+  say(`Czesc! Jestem pomocnikiem ${who}.`)
+  try {
+    if (mate?.job && ['build', 'decor', 'demolish'].includes(mate.job.kind)) {
+      await joinJob(mate.from, mate.job, false)
+    } else if (mate?.cmd && GATHER_CMD.test(stripPl(mate.cmd).toLowerCase())) {
+      // to samo zadanie co kolega, a zdobycz dla niego
+      const before = {}
+      for (const it of bot.inventory.items()) before[it.name] = (before[it.name] || 0) + it.count
+      say(`Pomagam: ${mate.cmd}.`)
+      handle(null, mate.cmd)
+      await sleep(500)
+      while (running || activeTasks > 0) await sleep(1000)
+      const gained = {}
+      for (const it of bot.inventory.items()) gained[it.name] = (gained[it.name] || 0) + it.count - (before[it.name] || 0)
+      const items = Object.entries(gained).filter(([, n]) => n > 0)
+      if (items.length) {
+        say(`Zanosze ${who}: ${items.map(([n, c]) => `${c} x ${n}`).join(', ')}.`)
+        await task(`oddaje zdobycz dla ${who}`, async () => {
+          for (const [n, c] of items) { if (!running) break; try { await giveItems(who, giveWord(n), c) } catch (e) { console.log('[bot] oddawanie:', e.message) } }
+        })
+      }
+    } else {
+      // walka albo nic duzego: chodzimy za nim i bijemy moby obok niego (10 minut albo do "stop")
+      say(`Pilnuje ${who} przez 10 minut.`)
+      await task(`pomagam ${who}`, () => guardFor(who, 10 * 60000))
+    }
+  } catch (e) { console.log('[bot] pomocnik:', e.message) }
+  say('Skonczylem pomagac - znikam!')
+  await sleep(1500)
+  bot.quit('pomocnik skonczyl')
+}
+if (HELPER_FOR) bot.once('spawn', () => { helperMode().catch(e => console.log('[bot] pomocnik:', e.message)) })
 
 // "pomoc <ja> <komu>" jest wyraznym poleceniem: przerywamy biezace zadanie i idziemy pomagac
 async function helpNow(arg) {
@@ -4844,6 +4905,7 @@ function routeToAi(user, msg, whisper) {
   if (/^(stop|zostan|stoj|czekaj)!?$/.test(t)) return false
   if (/^(czas|ile jeszcze|ile zostalo|kiedy skonczysz|ile czasu|eta|status)\??$/.test(t)) return false // szybkie informacje - prosto od bota
   if (/^(kontynuuj|kontynuluj|kontynuj|dalej|wznow|buduj dalej)( |$)/.test(t)) return false // wznawianie zadan - prosto do bota
+  if (/^((przywolaj|zawolaj|wezwij) )?pomocnik/.test(t)) return false // wolanie pomocnika - wszystkie boty musza to uslyszec
   if (pendingQuestion && pendingQuestion.options.some(([re]) => re.test(t))) return false
   const nickRe = new RegExp('^@?' + bot.username + '\\b[,:!]?\\s*', 'i')
   const text = String(msg).replace(nickRe, '').replace(/^ai\b[,:]?\s*/i, '').trim()
@@ -5003,6 +5065,8 @@ function handleCommand(user, msg, whisper = false) {
   if (/^(idz|ide|chodz|ruszaj)$/.test(verb)) return walkCommand(args.join(' '))
   if (c === 'dom' || c === 'wroc do domu' || c === 'do domu') return goToCommand(['dom'])
   if (verb === 'zabij') return args[0] ? killCommand(rest) : say('Kogo? np. "zabij Nick", "zabij zombie", "zabij Burek".')
+  const callHelper = c.match(/^(?:(?:przywolaj|zawolaj|wezwij) )?pomocnik\w*(?:\s+(?:dla|do)?\s*(\S+))?/)
+  if (callHelper) return helperCommand(user, callHelper[1])
   if (/^(pomoz|pomoc)$/.test(verb) && !/^pomoc$/.test(c)) {
     const names = args.filter(a => !/^(w|przy|mu|jej|budowie|budowaniu|walce|burzeniu|wystroju)$/.test(a))
     const me = bot.username.toLowerCase()

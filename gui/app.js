@@ -231,7 +231,8 @@ $('btnStart').addEventListener('click', async () => {
 $('btnStop').addEventListener('click', () => send('stop'))
 $('btnEdit').addEventListener('click', () => { if (selected) openModal(profile(selected)) })
 
-B.on('bot-state', s => {
+B.on('bot-state', async s => {
+  if (!profile(s.id)) profiles = await B.profiles() // np. pomocnik wezwany komenda "pomocnik"
   if (s.running) running.add(s.id)
   else { running.delete(s.id); statuses.delete(s.id) }
   renderTabs()
