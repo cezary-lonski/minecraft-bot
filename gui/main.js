@@ -175,6 +175,10 @@ function handleBotLine(id, line) {
     } catch {}
     return
   }
+  if (line.startsWith('@@MAKE ')) {
+    try { makeStatueFor(id, JSON.parse(line.slice(7))) } catch {}
+    return
+  }
   if (line.startsWith('@@SPAWN ')) {
     try { spawnHelper(id, JSON.parse(line.slice(8)).for) } catch {}
     return
@@ -403,12 +407,51 @@ ipcMain.handle('app:version', () => app.getVersion())
 // mody botow (paczki przedmiotow i zachowania) - wlaczone sa wspolne dla wszystkich botow, dzialajace dostaja zmiane od razu
 const enabledMods = () => Array.isArray(appSettings().mods) ? appSettings().mods : []
 ipcMain.handle('mods:get', () => enabledMods())
-ipcMain.handle('mods:set', (e, ids) => {
+// mody z budowlami: wlaczenie tworzy ich projekty w folderze projektow, wylaczenie je usuwa
+const BUILDING_MODS = { budowle: require('./mod-buildings.js') }
+ipcMain.handle('mods:set', async (e, ids) => {
   const list = Array.isArray(ids) ? ids.filter(x => typeof x === 'string').slice(0, 50) : []
+  const before = new Set(enabledMods())
   writeJson(APP_SETTINGS_FILE, { ...appSettings(), mods: list })
   for (const { proc } of procs.values()) { try { proc.stdin.write('@@MODS ' + JSON.stringify(list) + '\n') } catch {} }
-  return { ok: true }
+  let made = 0
+  const errors = []
+  for (const [id, lib] of Object.entries(BUILDING_MODS)) {
+    try {
+      if (list.includes(id) && !before.has(id)) { const r = await makeModBuildings(); made += r.done.length; errors.push(...r.errors) }
+      if (!list.includes(id) && before.has(id)) lib.removeAll(DESIGNS_DIR)
+    } catch (err) { errors.push(`${id}: ${err.message}`) }
+  }
+  send('designs-changed', {})
+  return { ok: true, made, errors }
 })
+// przeniesienie (raz): Hogwarty zrobione wczesniej sa teraz czescia modu "Wiecej budowli" - wlaczamy go i tworzymy budowle od nowa
+async function migrateHogwarts() {
+  if (appSettings().modsMigrated) return
+  writeJson(APP_SETTINGS_FILE, { ...appSettings(), modsMigrated: true })
+  const had = ['hogwart.json', 'wielki_hogwart.json'].some(f => fs.existsSync(path.join(DESIGNS_DIR, f)))
+  if (!had || enabledMods().includes('budowle')) return
+  writeJson(APP_SETTINGS_FILE, { ...appSettings(), mods: [...enabledMods(), 'budowle'] })
+  await makeModBuildings()
+  send('designs-changed', {})
+}
+// budowle modu liczymy w osobnym procesie (okno programu dziala dalej)
+function makeModBuildings() {
+  return new Promise(resolve => {
+    const blocksFile = path.join(DATA, 'bloki.json')
+    try { fs.writeFileSync(blocksFile, JSON.stringify(BLOCKS)) } catch {}
+    const p = spawn(process.execPath, [path.join(__dirname, 'mod-make.js'), DESIGNS_DIR, blocksFile], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true })
+    let out = ''
+    p.stdout.on('data', d => { out += d })
+    p.on('exit', () => { try { resolve(JSON.parse(out)) } catch { resolve({ done: [], errors: ['nie udalo sie stworzyc budowli'] }) } })
+  })
+}
+// bot prosi o posag gracza ("posag <nick>"): skin z internetu -> projekt "posag <nick>" -> bot go buduje
+async function makeStatueFor(id, req) {
+  const reply = r => { const e = procs.get(id); if (e) try { e.proc.stdin.write('@@MADE ' + JSON.stringify({ id: req.id, ...r }) + '\n') } catch {} }
+  if (!enabledMods().includes('budowle')) return reply({ error: 'Wlacz mod "Wiecej budowli" w programie (zakladka Mody).' })
+  try { const r = await BUILDING_MODS.budowle.makeStatue(Designer, DESIGNS_DIR, req.nick); send('designs-changed', {}); reply({ key: r.key, blocks: r.blocks }) } catch (err) { reply({ error: `Nie mam skina ${req.nick}: ${err.message}` }) }
+}
 ipcMain.handle('app:settings', () => appSettings())
 ipcMain.handle('app:saveSettings', (e, s) => { writeJson(APP_SETTINGS_FILE, { ...appSettings(), ...s }); return { ok: true } })
 ipcMain.handle('app:dataDir', (e, id) => { const dir = id ? botDir(id) : DATA; fs.mkdirSync(dir, { recursive: true }); shell.openPath(dir); return dir })
@@ -597,6 +640,7 @@ app.whenReady().then(() => {
   createWindow()
   win.webContents.once('did-finish-load', setupUpdates)
   win.webContents.once('did-finish-load', () => friends.autoStart()) // widocznosc w sieci, jesli byla wlaczona
+  win.webContents.once('did-finish-load', () => { migrateHogwarts().catch(e => console.log('mody:', e.message)) })
   // MB_SCREENSHOT=plik.png: zrzut okna po zaladowaniu i wyjscie (do sprawdzania wygladu bez klikania)
   if (process.env.MB_SCREENSHOT) {
     win.webContents.on('console-message', e => console.log('[okno]', e.message))

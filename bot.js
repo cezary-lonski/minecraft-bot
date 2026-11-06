@@ -825,6 +825,8 @@ setInterval(survivalTick, 400)
 const ModsLib = require('./gui/mods.js')
 let MODS = new Set((process.env.MC_MODS || '').split(',').filter(Boolean))
 const modOn = id => MODS.has(id)
+let makeSeq = 0
+const pendingMakes = new Map() // posagi zamowione w programie: id -> kto prosil
 const RANGED = ['skeleton', 'stray', 'bogged', 'pillager', 'blaze', 'witch', 'drowned']
 
 // "daj excalibur [nick]", "daj sobie zbroja smoka" - bot wpisuje /give (wymaga wlaczonych kodow w swiecie)
@@ -5063,6 +5065,16 @@ process.stdin.on('data', d => {
   stdinBuf = lines.pop()
   for (const line of lines) {
     if (line.startsWith('@@TEAM ')) { try { handleTeam(JSON.parse(line.slice(7))) } catch {} continue }
+    if (line.startsWith('@@MADE ')) {
+      try {
+        const r = JSON.parse(line.slice(7))
+        const user = pendingMakes.get(r.id)
+        pendingMakes.delete(r.id)
+        if (r.error) say(r.error)
+        else { say(`Projekt "${r.key}" gotowy (${r.blocks} blokow) - buduje!`); handle(user, `buduj ${r.key}`) }
+      } catch {}
+      continue
+    }
     if (line.startsWith('@@MODS ')) { try { MODS = new Set(JSON.parse(line.slice(7))); console.log('[bot] mody:', [...MODS].join(', ') || 'brak') } catch {} continue }
     if (line.startsWith('@@AIREPLY ')) { try { aiReply(JSON.parse(line.slice(10))) } catch {} continue }
     if (line.startsWith('@@AICMD ')) { try { runAiCommand(JSON.parse(line.slice(8))) } catch {} continue }
@@ -5249,6 +5261,17 @@ function handleCommand(user, msg, whisper = false) {
   if (/^(scraftuj|zrob|stworz|wykonaj)$/.test(verb)) return craftCommand(args.join(' '))
   if (/^(poluj|upoluj)$/.test(verb)) return huntCommand(args)
   if (c === 'spij' || c === 'idz spac') return sleepCommand()
+  // "posag <nick>": program robi projekt ze skina gracza (mod "Wiecej budowli"), potem budujemy
+  const statue = c.match(/^(?:zrob |postaw |stworz |buduj )?posag (\w{3,16})$/)
+  if (statue && !findDesign(`posag ${statue[1]}`)) {
+    if (!TEAM) { say('Posagi ze skina robi program (centrum sterowania).'); return }
+    const id = ++makeSeq
+    pendingMakes.set(id, user)
+    say(`Pobieram skin ${statue[1]} i robie projekt posagu...`)
+    process.stdout.write('@@MAKE ' + JSON.stringify({ id, what: 'statue', nick: statue[1] }) + '\n')
+    return
+  }
+  if (statue) return buildCommand(`posag ${statue[1]}`)
   if (/^(buduj|zbuduj|postaw budynek)$/.test(verb)) return buildCommand(args.join(' '))
   if (/^(wystroj|udekoruj|urzadz|umebluj)$/.test(verb)) { say('Wystroj robie teraz od razu przy budowie: meble, lampy, dywany i obrazy sa w planie. Napisz "buduj <budowla>".'); return }
   if (/^(zburz|zniszcz)$/.test(verb) || /^usun budowl/.test(c)) return demolishCommand(args.join(' '))

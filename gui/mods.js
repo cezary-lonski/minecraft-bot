@@ -63,6 +63,27 @@
       ]
     },
     {
+      id: 'budowle', kind: 'buildings', icon: '🗿', name: 'Więcej budowli',
+      desc: 'Posągi graczy ze skina (1 piksel = 1 blok, 32 bloki wysokości), miedziana wanienka i inne śmieszne budowle. Pojawiają się w Kreatorze (Moje projekty).',
+      builds: [
+        { cmd: 'buduj posag technoblade', name: 'Technoblade z prawdziwego skina' },
+        { cmd: 'buduj posag herobrine', name: 'Herobrine z białymi oczami' },
+        { cmd: 'posag <nick>', name: 'posąg dowolnego gracza (skin z internetu)' },
+        { cmd: 'buduj wanienka', name: 'miedziane schodki 16x, woda i lawa na ukos' },
+        { cmd: 'buduj wielki tort', name: 'tort ze świeczką, 1 piksel = 1 blok' },
+        { cmd: 'buduj gumowa kaczka', name: 'wielka żółta kaczka' },
+        { cmd: 'buduj dom do gory nogami', name: 'domek stojący na dachu' },
+        { cmd: 'buduj wielki hogwart', name: 'Światy Harry\'ego: zamek prawie 1:1 na skale, z oświetleniem i tajnymi przejściami' },
+        { cmd: 'buduj hogwart', name: 'mały Hogwart (61×55)' },
+        { cmd: 'buduj nora', name: 'krzywy dom Weasleyów' },
+        { cmd: 'buduj ulica pokatna', name: 'sklepy, Dziurawy Kocioł i bank Gringotta' },
+        { cmd: 'buduj peron 9 3 4', name: 'peron z ekspresem do Hogwartu' },
+        { cmd: 'buduj chatka hagrida', name: 'okrągła chata ze strzechą' },
+        { cmd: 'buduj boisko quidditch', name: 'trybuny w barwach domów i złote obręcze' },
+        { cmd: 'buduj bijaca wierzba', name: 'drzewo z gałęziami do ziemi' }
+      ]
+    },
+    {
       id: 'walka', kind: 'behavior', icon: '🗡', name: 'Lepsza walka',
       desc: 'Boty biją z wyskoku (trafienia krytyczne), robią uniki w bok i zasłaniają się tarczą przed strzałami.'
     },

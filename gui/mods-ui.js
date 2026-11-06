@@ -4,7 +4,8 @@ let modsOn = new Set()
 
 function modCard(m) {
   const on = modsOn.has(m.id)
-  const items = (m.items || []).map(i => `<li><code>daj ${esc(i.key)}</code>${i.name ? ` – ${esc(i.name)}` : ''}${i.parts ? ` (${i.parts.length} części)` : ''}</li>`).join('')
+  const items = (m.items || []).map(i => `<li><code>daj ${esc(i.key)}</code>${i.name ? ` – ${esc(i.name)}` : ''}${i.parts ? ` (${i.parts.length} części)` : ''}</li>`).join('') +
+    (m.builds || []).map(b => `<li><code>${esc(b.cmd)}</code> – ${esc(b.name)}</li>`).join('')
   return `
     <div class="mod-card ${on ? 'on' : ''}" data-id="${esc(m.id)}">
       <div class="mod-head">
@@ -18,6 +19,7 @@ function modCard(m) {
 }
 
 function renderMods() {
+  $('modsBuildings').innerHTML = ModsLib.MODS.filter(m => m.kind === 'buildings').map(modCard).join('')
   $('modsItems').innerHTML = ModsLib.MODS.filter(m => m.kind === 'items').map(modCard).join('')
   $('modsBehavior').innerHTML = ModsLib.MODS.filter(m => m.kind === 'behavior').map(modCard).join('')
 }
@@ -27,15 +29,18 @@ async function loadMods() {
   renderMods()
 }
 
-for (const id of ['modsItems', 'modsBehavior']) {
+for (const id of ['modsBuildings', 'modsItems', 'modsBehavior']) {
   $(id).addEventListener('change', async e => {
     const card = e.target.closest('.mod-card')
     if (!card) return
     const m = ModsLib.MODS.find(x => x.id === card.dataset.id)
     if (e.target.checked) modsOn.add(m.id); else modsOn.delete(m.id)
-    await B.setMods([...modsOn])
+    // mody z budowlami tworza projekty (chwile to trwa - np. skin z internetu)
+    if (m.kind === 'buildings' && e.target.checked) toast(`${m.name}: tworzę budowle…`)
+    const r = await B.setMods([...modsOn])
     renderMods()
-    toast(`${m.name}: ${e.target.checked ? 'włączony' : 'wyłączony'}`, 'ok')
+    if (r?.errors?.length) toast(r.errors.join(' '), 'err')
+    toast(`${m.name}: ${e.target.checked ? 'włączony' : 'wyłączony'}${r?.made ? ` – ${r.made} budowli w Kreatorze` : ''}`, 'ok')
   })
 }
 
