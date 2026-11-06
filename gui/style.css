@@ -293,7 +293,11 @@ textarea:focus, .row input:focus { outline: none; border-color: var(--green); }
 .proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
 .proj { background: var(--panel2); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; display: flex; flex-direction: column; gap: 4px; }
 .proj:hover { border-color: #4a5068; }
-.proj canvas { width: 100%; border-radius: 6px; background: #161821; }
+.proj canvas { width: 100%; border-radius: 6px; background: #161821; cursor: zoom-in; }
+.viewer-box { width: min(1200px, 96vw); }
+#vwCanvas { width: 100%; display: block; border-radius: 8px; background: radial-gradient(ellipse at 50% 35%, #232838 0%, #14161e 75%); cursor: grab; }
+.viewer-actions { margin-top: 12px; align-items: center; gap: 8px; }
+.tag-builtin { font-size: 11px; color: var(--yellow); }
 .proj-name { font-weight: 600; }
 
 /* ---------- asystent AI ---------- */

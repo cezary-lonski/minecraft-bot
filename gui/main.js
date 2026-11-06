@@ -372,6 +372,13 @@ function listDir(dir) {
 ipcMain.handle('designer:blocks', () => BLOCKS)
 ipcMain.handle('designs:list', () => listDir(DESIGNS_DIR).map(d => ({ key: d.key, name: d.name, description: d.description, spec: d.spec, size: d.size, blocks: d.blocks, created: d.created })).sort((a, b) => (b.created || 0) - (a.created || 0)))
 ipcMain.handle('designs:save', (e, spec) => saveDesign(spec))
+// podglad: dokladnie to, co zbuduje bot (zapisany plan), bez pustych komorek
+ipcMain.handle('designs:plan', (e, key) => {
+  const d = listDir(DESIGNS_DIR).find(x => x.key === key)
+  return d ? (d.plan || []).filter(c => c.block !== 'air') : null
+})
+// wbudowane budowle bota (dom, zamek, palac...) - plany wyeksportowane z bot.js (tools/export-builtin.js)
+ipcMain.handle('builtins:list', () => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'wbudowane.json'), 'utf8')) } catch { return [] } })
 ipcMain.handle('designs:delete', (e, key) => { try { fs.unlinkSync(fileOf(DESIGNS_DIR, key)) } catch {} send('designs-changed', {}); return { ok: true } })
 
 // ---------- wlasne komendy ----------

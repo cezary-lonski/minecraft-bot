@@ -206,6 +206,7 @@ async function loadDesigns() {
       <div class="muted small">${d.size ? `${d.size.w}×${d.size.d}×${d.size.h}` : ''} · ${d.blocks || '?'} bloków${d.spec?.source === 'ai' ? ' · 🤖 AI' : ''}</div>
       <div class="bbtns">
         <button class="btn primary small" data-act="build">Buduj</button>
+        <button class="btn small" data-act="view">👁 Podgląd</button>
         <button class="btn small" data-act="edit">Edytuj</button>
         <button class="btn ghost small danger-text" data-act="del">🗑</button>
       </div>
@@ -218,10 +219,11 @@ async function loadDesigns() {
 }
 $('crList').addEventListener('click', async e => {
   const el = e.target.closest('.proj')
-  const act = e.target.closest('[data-act]')?.dataset.act
+  const act = e.target.closest('[data-act]')?.dataset.act || (e.target.tagName === 'CANVAS' ? 'view' : null)
   if (!el || !act) return
   const d = designs.find(x => x.key === el.dataset.key)
   if (!d) return
+  if (act === 'view') { const cells = await B.designPlan(d.key); openViewer({ name: d.name, cells: cells || Designer.generate(d.spec).cells, cmd: `buduj ${d.name}`, spec: d.spec, description: d.description }) }
   if (act === 'build') { if (await send(`buduj ${d.name}`)) toast(`${profile(selected)?.name}: buduj ${d.name}`, 'ok') }
   if (act === 'edit') openInCreator(d.spec, d.name)
   if (act === 'del') { if (confirm(`Usunąć projekt „${d.name}”?`)) { await B.deleteDesign(d.key); loadDesigns() } }
@@ -237,6 +239,106 @@ function openInCreator(spec, name) {
   setTimeout(() => { fitCanvas(); regenerate() }, 30)
 }
 B.on('designs-changed', loadDesigns)
+
+// ---------- wbudowane budowle bota (dom, zamek, palac...) ----------
+const BUILTIN_NAMES = {
+  dom: ['Dom', 'Domek 7×7 z meblami'], 'dom villagera': ['Dom villagera', 'Mała chatka jak w wiosce'], zamek: ['Zamek', 'Mury, 4 wieże i donżon'],
+  zamczysko: ['Zamczysko', 'Duży zamek z dziedzińcem'], palac: ['Pałac', 'Pałac z kolumnami i ogrodem'], 'palac endu': ['Pałac Endu', 'Purpurowy pałac z wieżami'],
+  'baza podziemna': ['Baza podziemna', 'Wykopany pokój pod ziemią (głównie kopanie)']
+}
+let builtins = []
+async function loadBuiltins() {
+  const order = Object.keys(BUILTIN_NAMES)
+  builtins = (await B.builtins()).sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type))
+  $('crBuiltin').innerHTML = builtins.map(b => {
+    const [name, desc] = BUILTIN_NAMES[b.type] || [b.type, '']
+    const solid = b.cells.filter(c => !c.temp).length
+    return `
+    <div class="proj" data-type="${esc(b.type)}">
+      <canvas width="220" height="140"></canvas>
+      <div class="proj-name">${esc(name)} <span class="tag-builtin">wbudowana</span></div>
+      <div class="muted small">${esc(desc)} · ${solid} bloków</div>
+      <div class="bbtns">
+        <button class="btn primary small" data-act="build">Buduj</button>
+        <button class="btn small" data-act="view">👁 Podgląd</button>
+      </div>
+    </div>`
+  }).join('') || '<p class="muted">Brak danych o wbudowanych budowlach.</p>'
+  document.querySelectorAll('#crBuiltin .proj').forEach(el => {
+    const b = builtins.find(x => x.type === el.dataset.type)
+    if (b) drawIso(el.querySelector('canvas'), b.cells)
+  })
+}
+$('crBuiltin').addEventListener('click', async e => {
+  const el = e.target.closest('.proj')
+  const act = e.target.closest('[data-act]')?.dataset.act || (e.target.tagName === 'CANVAS' ? 'view' : null)
+  if (!el || !act) return
+  const b = builtins.find(x => x.type === el.dataset.type)
+  if (!b) return
+  const name = (BUILTIN_NAMES[b.type] || [b.type])[0]
+  if (act === 'view') openViewer({ name, cells: b.cells, cmd: `buduj ${b.type}`, description: (BUILTIN_NAMES[b.type] || [])[1] })
+  if (act === 'build') { if (await send(`buduj ${b.type}`)) toast(`${profile(selected)?.name}: buduj ${b.type}`, 'ok') }
+})
+
+// ---------- okno podgladu: duzy obraz, obracanie (przyciski albo przeciagniecie myszka), przekroj pietrami ----------
+const vw = { cells: [], rot: 2, item: null }
+function vwDraw() { drawIso($('vwCanvas'), vw.cells, { rot: vw.rot, maxY: Number($('vwLayer').value) }) }
+function openViewer(item) {
+  vw.item = item
+  vw.cells = item.cells
+  const solid = item.cells.filter(c => c.block !== 'air' && !c.temp)
+  const ys = solid.map(c => c.y)
+  const span = a => a.length ? Math.max(...a) - Math.min(...a) + 1 : 0
+  $('vwTitle').textContent = item.name
+  $('vwSize').textContent = `${span(solid.map(c => c.x))} × ${span(solid.map(c => c.z))} × ${span(ys)} (szer. × głęb. × wys.) · ${solid.length} bloków`
+  const L = $('vwLayer')
+  L.min = ys.length ? Math.min(...ys) : 0
+  L.max = ys.length ? Math.max(...ys) : 0
+  L.value = L.max
+  $('vwLayerInfo').textContent = item.description || ''
+  const mats = {}
+  for (const c of solid) mats[c.block] = (mats[c.block] || 0) + 1
+  const matList = Object.entries(mats).sort((a, b) => b[1] - a[1])
+  $('vwMats').innerHTML = matList.slice(0, 12).map(([b, n]) =>
+    `<span class="mat-chip ${Designer.isEasy(b) ? '' : 'hard'}"><i style="background:${Designer.blockColor(b)}"></i>${esc(b.replace(/_/g, ' '))} <b>${n}</b></span>`).join('') +
+    (matList.length > 12 ? `<span class="muted small">+ ${matList.length - 12} innych</span>` : '')
+  $('vwCmd').innerHTML = `albo w grze: <code>${esc(item.cmd)}</code>`
+  $('vwEdit').classList.toggle('hidden', !item.spec)
+  $('viewer').classList.remove('hidden')
+  const c = $('vwCanvas')
+  const w = Math.min(1150, c.parentElement.clientWidth - 4)
+  // obraz miesci sie w oknie razem z materialami i przyciskami pod spodem
+  if (w > 200) { c.width = w; c.height = Math.max(240, Math.min(Math.round(w * 0.58), window.innerHeight - 360)) }
+  vw.rot = 2
+  vwDraw()
+}
+const closeViewer = () => $('viewer').classList.add('hidden')
+$('vwClose').addEventListener('click', closeViewer)
+$('viewer').addEventListener('click', e => { if (e.target.id === 'viewer') closeViewer() })
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('viewer').classList.contains('hidden')) closeViewer() })
+$('vwRotL').addEventListener('click', () => { vw.rot = (vw.rot + 3) % 4; vwDraw() })
+$('vwRotR').addEventListener('click', () => { vw.rot = (vw.rot + 1) % 4; vwDraw() })
+$('vwLayer').addEventListener('input', () => {
+  vwDraw()
+  const L = $('vwLayer')
+  $('vwLayerInfo').textContent = Number(L.value) < Number(L.max) ? `Przekrój: widać warstwy do ${Number(L.value) - Number(L.min) + 1} z ${Number(L.max) - Number(L.min) + 1} (od dołu) – zobacz wnętrza i piętra.` : (vw.item?.description || '')
+})
+let dragX = null
+$('vwCanvas').addEventListener('mousedown', e => { dragX = e.clientX })
+window.addEventListener('mouseup', e => {
+  if (dragX === null) return
+  const dx = e.clientX - dragX
+  dragX = null
+  if (Math.abs(dx) > 40) { vw.rot = (vw.rot + (dx > 0 ? 1 : 3)) % 4; vwDraw() }
+})
+$('vwCanvas').addEventListener('wheel', e => {
+  e.preventDefault()
+  const L = $('vwLayer')
+  L.value = Math.max(Number(L.min), Math.min(Number(L.max), Number(L.value) + (e.deltaY > 0 ? -1 : 1)))
+  L.dispatchEvent(new Event('input'))
+}, { passive: false })
+$('vwBuild').addEventListener('click', async () => { if (vw.item && await send(vw.item.cmd)) { toast(`${profile(selected)?.name}: ${vw.item.cmd}`, 'ok'); closeViewer() } })
+$('vwEdit').addEventListener('click', () => { if (vw.item?.spec) { closeViewer(); openInCreator(vw.item.spec, vw.item.name) } })
 
 // ---------- wlasne komendy ----------
 let macros = []
@@ -405,6 +507,7 @@ async function updateKeyState() {
   aiWelcome()
   updateKeyState()
   await loadDesigns()
+  await loadBuiltins()
   await loadMacros()
   drawIso($('crCanvas'), [])
 })()

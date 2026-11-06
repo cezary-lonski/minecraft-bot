@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('bridge', {
   // kreator budowli i wlasne komendy
   blocks: () => ipcRenderer.invoke('designer:blocks'),
   designs: () => ipcRenderer.invoke('designs:list'),
+  designPlan: key => ipcRenderer.invoke('designs:plan', key),
+  builtins: () => ipcRenderer.invoke('builtins:list'),
   saveDesign: spec => ipcRenderer.invoke('designs:save', spec),
   deleteDesign: key => ipcRenderer.invoke('designs:delete', key),
   commands: () => ipcRenderer.invoke('commands:list'),

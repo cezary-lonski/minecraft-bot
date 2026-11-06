@@ -193,6 +193,10 @@
         <h3>📁 Moje projekty <span class="muted small">– wspólne dla wszystkich botów</span></h3>
         <div id="crList" class="proj-grid"></div>
       </div>
+      <div class="card">
+        <h3>🏰 Wbudowane budowle <span class="muted small">– bot zna je od zawsze (kliknij obrazek, żeby obejrzeć)</span></h3>
+        <div id="crBuiltin" class="proj-grid"></div>
+      </div>
     </section>
 
     <!-- ASYSTENT AI -->
@@ -324,6 +328,30 @@
       </div>
     </section>
   </main>
+
+  <!-- podglad budowli: duzy obraz, obracanie, przekroj pietrami -->
+  <div id="viewer" class="modal hidden">
+    <div class="modal-box viewer-box">
+      <div class="cr-head">
+        <h2 id="vwTitle">Podgląd</h2>
+        <span id="vwSize" class="muted"></span>
+        <div class="cr-tools">
+          <button class="btn ghost small" id="vwRotL" title="Obróć w lewo">⟲</button>
+          <button class="btn ghost small" id="vwRotR" title="Obróć w prawo">⟳</button>
+          <label class="muted small">przekrój <input type="range" id="vwLayer" min="0" max="10" value="10"></label>
+          <button class="btn ghost small" id="vwClose" title="Zamknij (Esc)">✕</button>
+        </div>
+      </div>
+      <canvas id="vwCanvas" width="1100" height="640"></canvas>
+      <p class="muted small" id="vwLayerInfo"></p>
+      <div class="cr-mats" id="vwMats"></div>
+      <div class="row viewer-actions">
+        <button class="btn primary" id="vwBuild">🏗 Buduj (wybrany bot)</button>
+        <button class="btn" id="vwEdit">✏ Edytuj w kreatorze</button>
+        <span class="muted small" id="vwCmd"></span>
+      </div>
+    </div>
+  </div>
 
   <!-- okno edycji bota -->
   <div id="modal" class="modal hidden">

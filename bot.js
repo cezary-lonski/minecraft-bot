@@ -4980,3 +4980,15 @@ bot.on('error', e => {
   if (e.code === 'ECONNREFUSED') console.log('[bot] Nikt nie nasluchuje pod tym adresem - sprawdz port LAN albo czy serwer dziala.')
 })
 bot.on('end', reason => { console.log('Rozlaczony.', reason ? `Powod: ${reason}` : ''); process.exit(0) })
+
+// eksport wbudowanych budowli (razem z wystrojem) do podgladu w programie: node tools/export-builtin.js
+if (process.env.MC_EXPORT_PLANS) {
+  const out = BUILD_TYPES.map(bt => ({
+    type: bt.type,
+    ahead: bt.ahead,
+    cells: planWithDecor(bt.type, PLAN_FOR_TYPE[bt.type]()).filter(c => c.block !== 'air').map(c => (c.temp ? { x: c.x, y: c.y, z: c.z, block: c.block, temp: true } : { x: c.x, y: c.y, z: c.z, block: c.block }))
+  }))
+  fs.writeFileSync(process.env.MC_EXPORT_PLANS, JSON.stringify(out))
+  console.log(out.map(b => `${b.type}: ${b.cells.length}`).join(', '))
+  process.exit(0)
+}
