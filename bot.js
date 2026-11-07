@@ -33,6 +33,20 @@ const bot = mineflayer.createBot({
   auth: process.env.MC_AUTH || 'offline' // 'microsoft' dla serwerow z online-mode=true
 })
 
+// Czat 1.21.11: bot bez konta wysyla komendy pakietem chat_command, ktory ma tylko tekst - bez potwierdzen przeczytanych
+// wiadomosci. minecraft-protocol i tak zeruje wtedy licznik, wiec serwer przy nastepnej wiadomosci bota widzi
+// potwierdzenie wiadomosci, ktorej "nie dostal" i wyrzuca (chat_validation_failed). Licznik zostaje do nastepnej wiadomosci.
+const signedChat = bot._client._signedChat
+if (signedChat) {
+  bot._client._signedChat = (message, options) => {
+    const seen = bot._client._lastSeenMessages
+    const pending = seen.pending
+    signedChat(message, options)
+    const signed = bot._client.profileKeys && bot._client._session
+    if (message.startsWith('/') && !signed && seen === bot._client._lastSeenMessages) seen.pending = pending
+  }
+}
+
 bot.loadPlugin(pathfinder)
 bot.loadPlugin(collectBlock)
 bot.loadPlugin(pvp)
@@ -1069,9 +1083,10 @@ function findHogwart() {
     const parent = pathLib.dirname(DATA_DIR)
     for (const d of fs.readdirSync(parent)) { try { lists.push(JSON.parse(fs.readFileSync(pathLib.join(parent, d, 'builds.json'), 'utf8'))) } catch {} }
   } catch {}
-  const all = lists.flat().filter(r => r && r.type === 'wielki hogwart' && (!r.dim || !bot.game?.dimension || r.dim === bot.game.dimension))
+  const all = lists.flat().filter(r => r && /^(hogwart z modelu|wielki hogwart)$/.test(r.type) && (!r.dim || !bot.game?.dimension || r.dim === bot.game.dimension))
   all.sort((a, b) => (b.at || 0) - (a.at || 0))
-  return all[0] ? { origin: new Vec3(all[0].origin.x, all[0].origin.y, all[0].origin.z), front: all[0].front } : null
+  // miejsca postaci zapisane w projekcie (hogwart z modelu ma je wyliczone przy tworzeniu)
+  return all[0] ? { origin: new Vec3(all[0].origin.x, all[0].origin.y, all[0].origin.z), front: all[0].front, type: all[0].type, spots: designOf(all[0].type)?.npcSpots || null } : null
 }
 
 // bot-postac (Snape, McGonagall, Dumbledore): idzie na swoje miejsce w zamku, wraca tam po zadaniach i wita uczniow
@@ -1082,7 +1097,7 @@ function npcPost() {
   if (wp) return new Vec3(wp.x, wp.y, wp.z)
   const h = findHogwart()
   if (!h || !NPC) return null
-  const [x, y, z] = NPC.post
+  const [x, y, z] = h.spots?.[NPC_ROLE] || NPC.post
   return toWorld(h.origin, h.front, x, y, z)
 }
 async function npcGoToPost(quiet) {
@@ -1125,11 +1140,13 @@ async function summonHogwartFolk(user, remove) {
   const v = bot.registry.version
   const snbt = v['>=']('1.21.5')
   const nameTag = (text, color) => snbt ? `{text:"${text}",color:"${color}"}` : `'${JSON.stringify({ text, color })}'`
-  const cmds = NpcLib.VILLAGERS.map(([name, color, prof, x, y, z]) => {
+  const cmds = NpcLib.VILLAGERS.map(([name, color, prof, x0, y0, z0], i) => {
+    const [x, y, z] = h.spots?.villagers?.[i] || [x0, y0, z0]
     const w = toWorld(h.origin, h.front, x, y, z)
     return `/summon villager ${w.x + 0.5} ${w.y} ${w.z + 0.5} {CustomName:${nameTag(name, color)},CustomNameVisible:1b,NoAI:1b,Invulnerable:1b,PersistenceRequired:1b,Silent:1b,Tags:["hogwart"],VillagerData:{profession:"minecraft:${prof}",level:5,type:"minecraft:plains"}}`
   })
-  const cat = toWorld(h.origin, h.front, -29, 16, 31)
+  const cs = h.spots?.villagers?.[NpcLib.VILLAGERS.length] || [-29, 16, 31]
+  const cat = toWorld(h.origin, h.front, cs[0], cs[1], cs[2])
   cmds.push(`/summon cat ${cat.x + 0.5} ${cat.y} ${cat.z + 0.5} {CustomName:${nameTag('Pani Norris', 'gray')},CustomNameVisible:1b,NoAI:1b,Invulnerable:1b,PersistenceRequired:1b,Tags:["hogwart"]}`)
   if (await runGameCommands(['/kill @e[tag=hogwart]', ...cmds], 'przywoluje postacie Hogwartu jako wiesniakow')) say(`Postacie Hogwartu sa na miejscach (${NpcLib.VILLAGERS.length} + kot Pani Norris). "usun postacie" - znikna.`)
 }

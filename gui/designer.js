@@ -957,7 +957,7 @@
   function finish(g, warnings, rooms) {
     // nieznane bloki zamieniamy na kamienne cegly
     const bad = new Set()
-    for (const c of g.cells()) if (c.block !== 'air' && !valid(c.block)) { bad.add(c.block); c.block = 'stone_bricks' }
+    for (const c of g.cells()) if (c.block !== 'air' && c.block !== 'painting' && !valid(c.block)) { bad.add(c.block); c.block = 'stone_bricks' }
     if (bad.size) warnings.push('Nie znam blokow: ' + [...bad].slice(0, 8).join(', ') + ' - zamienione na kamienne cegly.')
     for (const c of g.cells()) if (c.alt && !valid(c.alt)) delete c.alt
     addSupports(g, warnings)
