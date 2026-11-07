@@ -5266,7 +5266,9 @@ process.stdin.on('data', d => {
 })
 // gracze, ktorzy pisza jak boty (np. inny bot spoza programu, starsza wersja) - ich wiadomosci nie sa komendami
 const botLike = new Set()
-bot.on('chat', (user, msg) => {
+bot.on('chat', (user, msg, translate) => {
+  // komunikat serwera dla operatorow (np. "[Czarkonator: Gave 1 [Buty Gryffindoru] to Czarkonator]") - to nie jest komenda
+  if (translate === 'chat.type.admin' || /^(Gave|Given|Teleported|Set|Summoned|Killed|Applied|Gamemode|Changed|Filled|Cleared|Replaced|Made|Removed|Displaying|Reloaded|Unknown) /.test(msg)) return
   // inne boty z zespolu dostaja polecenia przez GUI, a nie przez czat - inaczej odpowiadalyby sobie w kolko
   if (user === bot.username || team.has(user) || botLike.has(user) || !isAllowed(user)) return
   if (/Nie znam komendy|Napisz "komendy"|^Gotowy\. Napisz/.test(msg)) {
