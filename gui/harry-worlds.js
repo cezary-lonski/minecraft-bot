@@ -332,7 +332,7 @@ function save(Designer, dir, key, description, cells, rooms, modId, presupported
   return { key, blocks: solid.length, size: r.size }
 }
 
-function makeAll(Designer, dir, modId = 'budowle') {
+function makeAll(Designer, dir, modId = 'harry') {
   const done = []
   const big = require('./harry/wielki-hogwart.js').generate()
   done.push(save(Designer, dir, 'wielki hogwart', 'Zamek szkoly magii na skale, prawie 1:1, z jasnozoltego kamienia, z oswietleniem (latarnie w salach, na pietrach wiez i wzdluz sciezek). Wielka Sala, wieze, biblioteka, klasy, szklarnie. Tajne przejscia na tlokach: biblioteka - Komnata Tajemnic w skale, Wielka Sala - Pokoj Zyczen, skrzydlo transmutacji - lochy. Budowany dzialkami 16x16 - wiele botow naraz.', big.cells, big.rooms, modId))
@@ -347,4 +347,12 @@ function makeAll(Designer, dir, modId = 'budowle') {
   return { done, errors: [] }
 }
 
-module.exports = { makeAll }
+// usuwa projekty dodatku (gdy zostaje wylaczony)
+function removeAll(dir) {
+  for (const f of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
+    if (!f.endsWith('.json')) continue
+    try { const d = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); if (d.mod === 'harry') fs.unlinkSync(path.join(dir, f)) } catch {}
+  }
+}
+
+module.exports = { makeAll, removeAll }

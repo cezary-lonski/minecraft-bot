@@ -355,8 +355,6 @@ async function makeAll(Designer, dir) {
   done.push(saveDesign(Designer, dir, 'gumowa kaczka', 'Wielka zolta gumowa kaczka.', duckCells()))
   done.push(saveDesign(Designer, dir, 'dom do gory nogami', 'Domek postawiony na dachu: kominem do gory nogami i trawnikiem na dnie.', upsideDownCells()))
   try { done.push(await makeStatue(Designer, dir, 'Technoblade')) } catch (e) { errors.push(`posag Technoblade: ${e.message}`) }
-  // Swiaty Harry'ego: oba Hogwarty i slawne miejsca
-  try { done.push(...require('./harry-worlds.js').makeAll(Designer, dir, 'budowle').done) } catch (e) { errors.push(`Swiaty Harry'ego: ${e.message}`) }
   return { done, errors }
 }
 // usuwa projekty modu (gdy mod zostaje wylaczony)

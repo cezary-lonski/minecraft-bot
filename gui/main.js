@@ -444,7 +444,7 @@ ipcMain.handle('app:version', () => app.getVersion())
 const enabledMods = () => Array.isArray(appSettings().mods) ? appSettings().mods : []
 ipcMain.handle('mods:get', () => enabledMods())
 // mody z budowlami: wlaczenie tworzy ich projekty w folderze projektow, wylaczenie je usuwa
-const BUILDING_MODS = { budowle: require('./mod-buildings.js') }
+const BUILDING_MODS = { budowle: require('./mod-buildings.js'), harry: require('./harry-worlds.js') }
 ipcMain.handle('mods:set', async (e, ids) => {
   const list = Array.isArray(ids) ? ids.filter(x => typeof x === 'string').slice(0, 50) : []
   const before = new Set(enabledMods())
@@ -454,7 +454,7 @@ ipcMain.handle('mods:set', async (e, ids) => {
   const errors = []
   for (const [id, lib] of Object.entries(BUILDING_MODS)) {
     try {
-      if (list.includes(id) && !before.has(id)) { const r = await makeModBuildings(); made += r.done.length; errors.push(...r.errors) }
+      if (list.includes(id) && !before.has(id)) { const r = await makeModBuildings(id); made += r.done.length; errors.push(...r.errors) }
       if (!list.includes(id) && before.has(id)) lib.removeAll(DESIGNS_DIR)
     } catch (err) { errors.push(`${id}: ${err.message}`) }
   }
@@ -462,21 +462,22 @@ ipcMain.handle('mods:set', async (e, ids) => {
   return { ok: true, made, errors }
 })
 // przeniesienie (raz): Hogwarty zrobione wczesniej sa teraz czescia modu "Wiecej budowli" - wlaczamy go i tworzymy budowle od nowa
+// (budowle Harry'ego sa w osobnym dodatku "Swiat Harry'ego Pottera")
 async function migrateHogwarts() {
-  if (appSettings().modsMigrated) return
-  writeJson(APP_SETTINGS_FILE, { ...appSettings(), modsMigrated: true })
-  const had = ['hogwart.json', 'wielki_hogwart.json'].some(f => fs.existsSync(path.join(DESIGNS_DIR, f)))
-  if (!had || enabledMods().includes('budowle')) return
-  writeJson(APP_SETTINGS_FILE, { ...appSettings(), mods: [...enabledMods(), 'budowle'] })
-  await makeModBuildings()
+  if (appSettings().modsMigrated2) return
+  writeJson(APP_SETTINGS_FILE, { ...appSettings(), modsMigrated2: true })
+  const had = ['hogwart.json', 'wielki_hogwart.json', 'nora.json'].some(f => fs.existsSync(path.join(DESIGNS_DIR, f)))
+  if (!had || enabledMods().includes('harry')) return
+  writeJson(APP_SETTINGS_FILE, { ...appSettings(), mods: [...enabledMods(), 'harry'] })
+  await makeModBuildings('harry')
   send('designs-changed', {})
 }
 // budowle modu liczymy w osobnym procesie (okno programu dziala dalej)
-function makeModBuildings() {
+function makeModBuildings(modId = 'budowle') {
   return new Promise(resolve => {
     const blocksFile = path.join(DATA, 'bloki.json')
     try { fs.writeFileSync(blocksFile, JSON.stringify(BLOCKS)) } catch {}
-    const p = spawn(process.execPath, [path.join(__dirname, 'mod-make.js'), DESIGNS_DIR, blocksFile], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true })
+    const p = spawn(process.execPath, [path.join(__dirname, 'mod-make.js'), DESIGNS_DIR, blocksFile, modId], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true })
     let out = ''
     p.stdout.on('data', d => { out += d })
     p.on('exit', () => { try { resolve(JSON.parse(out)) } catch { resolve({ done: [], errors: ['nie udalo sie stworzyc budowli'] }) } })

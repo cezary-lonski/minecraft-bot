@@ -88,8 +88,16 @@
         { cmd: 'buduj wanienka', name: 'miedziane schodki 16x, woda i lawa na ukos' },
         { cmd: 'buduj wielki tort', name: 'tort ze świeczką, 1 piksel = 1 blok' },
         { cmd: 'buduj gumowa kaczka', name: 'wielka żółta kaczka' },
-        { cmd: 'buduj dom do gory nogami', name: 'domek stojący na dachu' },
-        { cmd: 'buduj wielki hogwart', name: 'Światy Harry\'ego: zamek prawie 1:1 na skale, z oświetleniem i tajnymi przejściami' },
+        { cmd: 'buduj dom do gory nogami', name: 'domek stojący na dachu' }
+
+      ]
+    },
+    {
+      id: 'harry', kind: 'buildings', icon: '🏰', name: "Świat Harry'ego Pottera",
+      desc: 'Hogwart (wielki - prawie 1:1, z wnętrzami, lochami i tajnymi przejściami - i mały), Nora, ulica Pokątna, peron 9¾, chatka Hagrida, boisko do quidditcha i Bijąca Wierzba. Pojawiają się w Kreatorze.',
+      builds: [
+        { cmd: 'buduj wielki hogwart', name: 'zamek prawie 1:1 na skale, z oświetleniem i tajnymi przejściami' },
+        { cmd: 'buduj hogwart z modelu', name: 'Hogwart z Twojego modelu 3D (jeśli go zrobiłem z pliku STL)' },
         { cmd: 'buduj hogwart', name: 'mały Hogwart (61×55)' },
         { cmd: 'buduj nora', name: 'krzywy dom Weasleyów' },
         { cmd: 'buduj ulica pokatna', name: 'sklepy, Dziurawy Kocioł i bank Gringotta' },
